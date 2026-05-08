@@ -4,6 +4,7 @@ import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.model.User;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.repository.UserRepository;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
