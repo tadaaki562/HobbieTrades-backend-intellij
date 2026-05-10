@@ -13,8 +13,7 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedOrigins(
                         "http://127.0.0.1:5500",
                         "http://localhost:5500",
-                        "https://your-app-name.netlify.app",
-                        "https://your-app-name.vercel.app"
+                        "https://hobbietrades.netlify.app"
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
