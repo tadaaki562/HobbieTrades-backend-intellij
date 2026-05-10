@@ -5,6 +5,7 @@ import com.hobbietrades.backend.repository.*;
 import com.hobbietrades.backend.service.MatchingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -20,6 +21,7 @@ public class TradeController {
     @Autowired private ItemRepository itemRepository;
     @Autowired private MatchingService matchingService;
     @Autowired private MessageRepository messageRepository;
+    @Autowired private ReviewRepository reviewRepository;
 
     // POST /api/trades — propose a trade
     @PostMapping
@@ -145,6 +147,47 @@ public class TradeController {
         response.put("message", "completed".equals(trade.getStatus())
                 ? "Trade completed! Both parties confirmed."
                 : "Confirmation recorded.");
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Remove a trade and its chat from the user's inbox. Only allowed for
+     * completed or declined trades, and only for participants.
+     */
+    @DeleteMapping("/{id}")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> deleteTradeForUser(
+            @PathVariable Long id,
+            @RequestParam Long userId) {
+
+        Map<String, Object> response = new HashMap<>();
+        Optional<Trade> tradeOpt = tradeRepository.findById(id);
+        if (tradeOpt.isEmpty()) {
+            response.put("success", false);
+            response.put("message", "Trade not found.");
+            return ResponseEntity.badRequest().body(response);
+        }
+        Trade trade = tradeOpt.get();
+        boolean participant = trade.getProposer().getId().equals(userId)
+                || trade.getReceiver().getId().equals(userId);
+        if (!participant) {
+            response.put("success", false);
+            response.put("message", "You can only delete your own trades.");
+            return ResponseEntity.status(403).body(response);
+        }
+        String st = trade.getStatus();
+        if (!"completed".equals(st) && !"declined".equals(st)) {
+            response.put("success", false);
+            response.put("message", "Only completed or declined trades can be removed from your inbox.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        reviewRepository.deleteByTradeId(id);
+        messageRepository.deleteByTradeId(id);
+        tradeRepository.delete(trade);
+
+        response.put("success", true);
+        response.put("message", "Chat removed.");
         return ResponseEntity.ok(response);
     }
 
