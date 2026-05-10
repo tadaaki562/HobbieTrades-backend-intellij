@@ -8,38 +8,34 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/trades")
 @CrossOrigin(origins = "*")
 public class TradeController {
 
-    @Autowired
-    private TradeRepository tradeRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private ItemRepository itemRepository;
-
-    @Autowired
-    private MatchingService matchingService;
+    @Autowired private TradeRepository tradeRepository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private ItemRepository itemRepository;
+    @Autowired private MatchingService matchingService;
+    @Autowired private MessageRepository messageRepository;
 
     // POST /api/trades — propose a trade
     @PostMapping
     public ResponseEntity<Map<String, Object>> proposeTrade(
             @RequestBody Map<String, Object> body) {
+
         Map<String, Object> response = new HashMap<>();
 
-        Long proposerId = Long.parseLong(body.get("proposerId").toString());
-        Long receiverId = Long.parseLong(body.get("receiverId").toString());
-        Long offeredItemId = Long.parseLong(body.get("offeredItemId").toString());
+        Long proposerId     = Long.parseLong(body.get("proposerId").toString());
+        Long receiverId     = Long.parseLong(body.get("receiverId").toString());
+        Long offeredItemId  = Long.parseLong(body.get("offeredItemId").toString());
         Long requestedItemId = Long.parseLong(body.get("requestedItemId").toString());
 
-        Optional<User> proposer = userRepository.findById(proposerId);
-        Optional<User> receiver = userRepository.findById(receiverId);
-        Optional<Item> offeredItem = itemRepository.findById(offeredItemId);
+        Optional<User> proposer      = userRepository.findById(proposerId);
+        Optional<User> receiver      = userRepository.findById(receiverId);
+        Optional<Item> offeredItem   = itemRepository.findById(offeredItemId);
         Optional<Item> requestedItem = itemRepository.findById(requestedItemId);
 
         if (proposer.isEmpty() || receiver.isEmpty() ||
@@ -55,7 +51,6 @@ public class TradeController {
         trade.setOfferedItem(offeredItem.get());
         trade.setRequestedItem(requestedItem.get());
         trade.setStatus("pending");
-
         tradeRepository.save(trade);
 
         response.put("success", true);
@@ -64,7 +59,7 @@ public class TradeController {
         return ResponseEntity.ok(response);
     }
 
-    // GET /api/trades/user/{userId} — get all trades for a user
+    // GET /api/trades/user/{userId} — all trades for a user
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<Trade>> getUserTrades(@PathVariable Long userId) {
         return ResponseEntity.ok(
@@ -72,7 +67,7 @@ public class TradeController {
         );
     }
 
-    // PUT /api/trades/{id}/accept — accept a trade
+    // PUT /api/trades/{id}/accept
     @PutMapping("/{id}/accept")
     public ResponseEntity<Map<String, Object>> acceptTrade(@PathVariable Long id) {
         Map<String, Object> response = new HashMap<>();
@@ -85,16 +80,21 @@ public class TradeController {
         Trade trade = tradeOpt.get();
         trade.setStatus("accepted");
         tradeRepository.save(trade);
+        createStatusMessage(trade,
+                trade.getReceiver(),
+                "Trade accepted by " + safeName(trade.getReceiver()) +
+                ". Waiting for both traders to confirm meetup completion.");
         response.put("success", true);
         response.put("message", "Trade accepted!");
         return ResponseEntity.ok(response);
     }
 
-    // PUT /api/trades/{id}/confirm — confirm trade completed
+    // PUT /api/trades/{id}/confirm — both parties confirm → completed
     @PutMapping("/{id}/confirm")
     public ResponseEntity<Map<String, Object>> confirmTrade(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
+
         Map<String, Object> response = new HashMap<>();
         Optional<Trade> tradeOpt = tradeRepository.findById(id);
         if (tradeOpt.isEmpty()) {
@@ -112,11 +112,10 @@ public class TradeController {
             trade.setReceiverConfirmed(true);
         }
 
-        // Both confirmed — mark as completed
-        if (trade.getProposerConfirmed() && trade.getReceiverConfirmed()) {
+        if (Boolean.TRUE.equals(trade.getProposerConfirmed())
+                && Boolean.TRUE.equals(trade.getReceiverConfirmed())) {
             trade.setStatus("completed");
 
-            // Update trade counts for both users
             User proposer = trade.getProposer();
             User receiver = trade.getReceiver();
             proposer.setTradeCount(proposer.getTradeCount() + 1);
@@ -124,27 +123,29 @@ public class TradeController {
             userRepository.save(proposer);
             userRepository.save(receiver);
 
-            // Mark both items as unavailable
             trade.getOfferedItem().setIsAvailable(false);
             trade.getRequestedItem().setIsAvailable(false);
             itemRepository.save(trade.getOfferedItem());
             itemRepository.save(trade.getRequestedItem());
+            createStatusMessage(trade, trade.getReceiver(),
+                    "Trade completed. Both traders confirmed the meetup.");
+        } else {
+            String waitingFor = trade.getProposerConfirmed()
+                    ? safeName(trade.getReceiver())
+                    : safeName(trade.getProposer());
+            createStatusMessage(trade,
+                    resolveUserById(trade, userId),
+                    safeNameById(trade, userId) +
+                    " confirmed meetup completion. Waiting for " + waitingFor + ".");
         }
 
         tradeRepository.save(trade);
         response.put("success", true);
-        response.put("status", trade.getStatus());
-        response.put("message", trade.getStatus().equals("completed") ?
-                "Trade completed! Both parties confirmed." : "Confirmation recorded.");
+        response.put("status",  trade.getStatus());
+        response.put("message", "completed".equals(trade.getStatus())
+                ? "Trade completed! Both parties confirmed."
+                : "Confirmation recorded.");
         return ResponseEntity.ok(response);
-    }
-
-    // GET /api/trades/matches?itemId=1&userId=1
-    @GetMapping("/matches")
-    public ResponseEntity<List<Map<String, Object>>> getMatches(
-            @RequestParam Long itemId,
-            @RequestParam Long userId) {
-        return ResponseEntity.ok(matchingService.findMatches(itemId, userId));
     }
 
     // PUT /api/trades/{id}/decline
@@ -163,5 +164,68 @@ public class TradeController {
         response.put("success", true);
         response.put("message", "Trade declined.");
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * GET /api/trades/matches?userId=1&limit=20
+     *
+     * FIX: old endpoint called matchingService.findMatches(itemId, userId) which
+     * doesn't exist. Replaced with getMatchesForUser() — the actual method signature.
+     * The itemId param is no longer needed; matching is user-scoped, not item-scoped.
+     */
+    @GetMapping("/matches")
+    public ResponseEntity<List<Map<String, Object>>> getMatches(
+            @RequestParam Long userId,
+            @RequestParam(defaultValue = "20") int limit) {
+
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+        List<MatchingService.MatchResult> matches =
+                matchingService.getMatchesForUser(userOpt.get(), limit);
+
+        List<Map<String, Object>> result = matches.stream().map(m -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("item",         m.getItem());
+            entry.put("matchPercent", m.getMatchPercent());
+            entry.put("matchReason",  m.getMatchReason());
+            return entry;
+        }).collect(Collectors.toList());
+
+        return ResponseEntity.ok(result);
+    }
+
+    private void createStatusMessage(Trade trade, User sender, String content) {
+        Message message = new Message();
+        message.setTrade(trade);
+        message.setSender(sender != null ? sender : trade.getProposer());
+        message.setContent(content);
+        messageRepository.save(message);
+    }
+
+    private String safeName(User user) {
+        return user != null && user.getName() != null && !user.getName().isBlank()
+                ? user.getName()
+                : "Trader";
+    }
+
+    private String safeNameById(Trade trade, Long userId) {
+        if (trade.getProposer() != null && trade.getProposer().getId().equals(userId)) {
+            return safeName(trade.getProposer());
+        }
+        if (trade.getReceiver() != null && trade.getReceiver().getId().equals(userId)) {
+            return safeName(trade.getReceiver());
+        }
+        return "A trader";
+    }
+
+    private User resolveUserById(Trade trade, Long userId) {
+        if (trade.getProposer() != null && trade.getProposer().getId().equals(userId)) {
+            return trade.getProposer();
+        }
+        if (trade.getReceiver() != null && trade.getReceiver().getId().equals(userId)) {
+            return trade.getReceiver();
+        }
+        return trade.getProposer();
     }
 }

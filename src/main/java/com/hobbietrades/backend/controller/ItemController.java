@@ -4,7 +4,6 @@ import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.model.User;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.repository.UserRepository;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -81,8 +80,8 @@ public class ItemController {
         item.setCategory(body.get("category").toString());
         item.setConditionLabel(body.get("conditionLabel").toString());
         item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
-        item.setLookingFor(body.get("lookingFor").toString());
-        item.setLocation(body.get("location").toString());
+        if (body.get("lookingFor") != null) item.setLookingFor(body.get("lookingFor").toString());
+        if (body.get("location")   != null) item.setLocation(body.get("location").toString());
         item.setIsAvailable(true);
 
         itemRepository.save(item);
@@ -93,9 +92,11 @@ public class ItemController {
         return ResponseEntity.ok(response);
     }
 
-    // DELETE /api/items/{id}
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> deleteItem(@PathVariable Long id) {
+    // PUT /api/items/{id} — edit an existing listing
+    @PutMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> updateItem(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
         Map<String, Object> response = new HashMap<>();
         Optional<Item> itemOpt = itemRepository.findById(id);
         if (itemOpt.isEmpty()) {
@@ -103,7 +104,57 @@ public class ItemController {
             response.put("message", "Item not found.");
             return ResponseEntity.badRequest().body(response);
         }
+
         Item item = itemOpt.get();
+
+        // Only the owner can edit
+        Long requestingUserId = Long.parseLong(body.get("userId").toString());
+        if (!item.getUser().getId().equals(requestingUserId)) {
+            response.put("success", false);
+            response.put("message", "You can only edit your own listings.");
+            return ResponseEntity.status(403).body(response);
+        }
+
+        if (body.get("title")          != null) item.setTitle(body.get("title").toString());
+        if (body.get("description")    != null) item.setDescription(body.get("description").toString());
+        if (body.get("category")       != null) item.setCategory(body.get("category").toString());
+        if (body.get("conditionLabel") != null) item.setConditionLabel(body.get("conditionLabel").toString());
+        if (body.get("estimatedValue") != null) item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
+        if (body.get("lookingFor")     != null) item.setLookingFor(body.get("lookingFor").toString());
+        if (body.get("location")       != null) item.setLocation(body.get("location").toString());
+
+        itemRepository.save(item);
+
+        response.put("success", true);
+        response.put("message", "Item updated successfully!");
+        return ResponseEntity.ok(response);
+    }
+
+    // DELETE /api/items/{id} — soft delete (mark unavailable)
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> deleteItem(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> response = new HashMap<>();
+        Optional<Item> itemOpt = itemRepository.findById(id);
+        if (itemOpt.isEmpty()) {
+            response.put("success", false);
+            response.put("message", "Item not found.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        Item item = itemOpt.get();
+
+        // Ownership check if userId provided
+        if (body != null && body.get("userId") != null) {
+            Long requestingUserId = Long.parseLong(body.get("userId").toString());
+            if (!item.getUser().getId().equals(requestingUserId)) {
+                response.put("success", false);
+                response.put("message", "You can only delete your own listings.");
+                return ResponseEntity.status(403).body(response);
+            }
+        }
+
         item.setIsAvailable(false);
         itemRepository.save(item);
         response.put("success", true);

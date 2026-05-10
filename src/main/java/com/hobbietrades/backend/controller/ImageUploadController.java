@@ -1,0 +1,469 @@
+package com.hobbietrades.backend.controller;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hobbietrades.backend.model.Item;
+import com.hobbietrades.backend.repository.ItemRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.*;
+import java.net.URI;
+import java.net.http.*;
+import java.nio.file.*;
+import java.time.Duration;
+import java.util.*;
+import java.util.regex.Pattern;
+
+@RestController
+@RequestMapping("/api/items")
+@CrossOrigin(origins = "*")
+public class ImageUploadController {
+
+    @Autowired
+    private ItemRepository itemRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${huggingface.api.key}")
+    private String hfApiKey;
+
+    @Value("${upload.dir:uploads/}")
+    private String uploadDir;
+
+    // ── Category keyword mapping (ViT ImageNet labels → HobbieTrades categories) ──
+    private static final Map<String, String> LABEL_TO_CATEGORY = new LinkedHashMap<>();
+    static {
+        // Instruments
+        for (String k : new String[]{"guitar","banjo","violin","cello","piano","drum",
+                "saxophone","flute","trumpet","keyboard","harmonica","accordion",
+                "maracas","ukulele","sitar","lute","oboe","trombone","tuba"}) {
+            LABEL_TO_CATEGORY.put(k, "Instruments");
+        }
+        // Cameras
+        for (String k : new String[]{"camera","reflex camera","polaroid","lens",
+                "tripod","binoculars","telescope","microscope"}) {
+            LABEL_TO_CATEGORY.put(k, "Cameras");
+        }
+        // Gaming
+        for (String k : new String[]{"joystick","gamepad","controller","nintendo",
+                "playstation","xbox","console","cartridge","arcade"}) {
+            LABEL_TO_CATEGORY.put(k, "Gaming");
+        }
+        // Sports
+        for (String k : new String[]{"basketball","football","volleyball","tennis ball",
+                "tennis racket","badminton","boxing glove","dumbbell","bicycle",
+                "skateboard","surfboard","ski","snowboard","soccer ball","golf","bow"}) {
+            LABEL_TO_CATEGORY.put(k, "Sports");
+        }
+        // Art
+        for (String k : new String[]{"paintbrush","palette","crayon","pencil box",
+                "canvas","easel","watercolor","acrylic","pastel","marker"}) {
+            LABEL_TO_CATEGORY.put(k, "Art");
+        }
+        // Craft
+        for (String k : new String[]{"sewing machine","knitting","crochet","yarn",
+                "fabric","thread","needle","embroidery","beads","loom"}) {
+            LABEL_TO_CATEGORY.put(k, "Craft");
+        }
+    }
+
+    private static final Map<String, String> LABEL_NORMALIZATION = new LinkedHashMap<>();
+    static {
+        LABEL_NORMALIZATION.put("acoustic guitar", "guitar");
+        LABEL_NORMALIZATION.put("electric guitar", "guitar");
+        LABEL_NORMALIZATION.put("bass guitar", "guitar");
+        LABEL_NORMALIZATION.put("digital camera", "camera");
+        LABEL_NORMALIZATION.put("camera lens", "lens");
+        LABEL_NORMALIZATION.put("video game console", "console");
+        LABEL_NORMALIZATION.put("game controller", "controller");
+        LABEL_NORMALIZATION.put("table tennis", "tennis");
+        LABEL_NORMALIZATION.put("paint brush", "paintbrush");
+        LABEL_NORMALIZATION.put("sewing kit", "sewing machine");
+        LABEL_NORMALIZATION.put("stereo", "speaker");
+        LABEL_NORMALIZATION.put("loudspeaker", "speaker");
+        LABEL_NORMALIZATION.put("head phones", "headphones");
+        LABEL_NORMALIZATION.put("cell phone", "phone");
+        LABEL_NORMALIZATION.put("smart phone", "phone");
+        LABEL_NORMALIZATION.put("bike", "bicycle");
+        LABEL_NORMALIZATION.put("football helmet", "football");
+        LABEL_NORMALIZATION.put("soccer", "soccer ball");
+        LABEL_NORMALIZATION.put("water colour", "watercolor");
+    }
+
+    private static final Pattern NON_ALNUM = Pattern.compile("[^a-z0-9\\s]");
+    private static final Set<String> DIRECT_PRIORITY_KEYWORDS = Set.of(
+            "guitar", "piano", "violin", "drum", "camera", "lens", "console", "controller",
+            "basketball", "football", "tennis", "paintbrush", "canvas", "sewing", "crochet"
+    );
+
+    // ── PH baseline second-hand values ₱ [Worn, Fair, Good, Like New] ──
+    private static final Map<String, int[]> PH_VALUE_RANGES = new HashMap<>();
+    static {
+        PH_VALUE_RANGES.put("Instruments", new int[]{500,  1500,  5000, 18000});
+        PH_VALUE_RANGES.put("Cameras",     new int[]{800,  2500,  7000, 20000});
+        PH_VALUE_RANGES.put("Gaming",      new int[]{400,  1200,  4000, 12000});
+        PH_VALUE_RANGES.put("Sports",      new int[]{300,  900,   2500,  7000});
+        PH_VALUE_RANGES.put("Art",         new int[]{200,  600,   1500,  4000});
+        PH_VALUE_RANGES.put("Craft",       new int[]{150,  450,   1200,  3500});
+        PH_VALUE_RANGES.put("Other",       new int[]{200,  600,   1500,  4000});
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // POST /api/items/analyze  — AI analysis only, no DB write
+    // Frontend calls this immediately when user selects a photo
+    // ════════════════════════════════════════════════════════════════════════
+    @PostMapping("/analyze")
+    public ResponseEntity<Map<String, Object>> analyzeOnly(
+            @RequestParam("photo") MultipartFile photo) {
+
+        Map<String, Object> result = new HashMap<>();
+        try {
+            Map<String, String> ai = runAI(photo.getBytes());
+
+            result.put("success",           true);
+            result.put("detectedCategory",  ai.get("category"));
+            result.put("detectedCondition", ai.get("condition"));
+            result.put("rawLabels",         ai.get("rawLabels"));
+            result.put("caption",           ai.get("caption"));
+            result.put("confidence",        ai.get("confidence"));
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "Analysis failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(result);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // POST /api/items/{id}/upload  — save photo + update item in DB
+    // Frontend calls this after item is saved, to attach the photo
+    // ════════════════════════════════════════════════════════════════════════
+    @PostMapping("/{id}/upload")
+    public ResponseEntity<Map<String, Object>> uploadPhoto(
+            @PathVariable Long id,
+            @RequestParam("photo") MultipartFile photo) {
+
+        Map<String, Object> response = new HashMap<>();
+
+        Optional<Item> itemOpt = itemRepository.findById(id);
+        if (itemOpt.isEmpty()) {
+            response.put("success", false);
+            response.put("message", "Item not found: " + id);
+            return ResponseEntity.status(404).body(response);
+        }
+        Item item = itemOpt.get();
+
+        // Save file to disk
+        String photoUrl;
+        try {
+            photoUrl = saveFile(photo, id);
+        } catch (IOException e) {
+            response.put("success", false);
+            response.put("message", "File save failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+
+        item.setPhotoUrl(photoUrl);
+
+        // Run AI and update blank fields
+        try {
+            Map<String, String> ai = runAI(photo.getBytes());
+            boolean catUpdated  = false;
+            boolean condUpdated = false;
+
+            if (isBlank(item.getCategory()) && !isBlank(ai.get("category"))) {
+                item.setCategory(ai.get("category"));
+                catUpdated = true;
+            }
+            if (isBlank(item.getConditionLabel()) && !isBlank(ai.get("condition"))) {
+                item.setConditionLabel(ai.get("condition"));
+                condUpdated = true;
+            }
+
+            itemRepository.save(item);
+
+            response.put("success",           true);
+            response.put("photoUrl",          photoUrl);
+            response.put("detectedCategory",  ai.get("category"));
+            response.put("detectedCondition", ai.get("condition"));
+            response.put("rawLabels",         ai.get("rawLabels"));
+            response.put("caption",           ai.get("caption"));
+            response.put("categoryUpdated",   catUpdated);
+            response.put("conditionUpdated",  condUpdated);
+            response.put("message",           "Photo uploaded and analyzed successfully");
+
+        } catch (Exception e) {
+            // Photo saved even if AI failed — still return success
+            itemRepository.save(item);
+            response.put("success",  true);
+            response.put("photoUrl", photoUrl);
+            response.put("message",  "Photo saved (AI analysis failed: " + e.getMessage() + ")");
+        }
+
+        return ResponseEntity.ok(response);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Core AI logic — calls ViT (base + large), maps labels, derives condition
+    // ════════════════════════════════════════════════════════════════════════
+    private Map<String, String> runAI(byte[] imageBytes) throws Exception {
+        System.out.println("[AI] Starting analysis, key prefix: " + hfApiKey.substring(0, 8) + "...");
+
+        Map<String, String> result = new HashMap<>();
+        result.put("category",   "Other");
+        result.put("condition",  "Good");
+        result.put("rawLabels",  "");
+        result.put("caption",    "");
+        result.put("confidence", "0%");
+
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+
+        // Step 1: ViT base with retry
+        List<LabelScore> scores = callVitWithRetry(client, imageBytes,
+                "https://router.huggingface.co/hf-inference/models/google/vit-base-patch16-224",
+                "ViT-base");
+
+        // Step 2: if low confidence, also try ViT large and take the better result
+        if (scores.isEmpty() || scores.get(0).score < 0.50) {
+            System.out.println("[AI] ViT-base low confidence, trying ViT-large...");
+            List<LabelScore> largeScores = callVitWithRetry(client, imageBytes,
+                    "https://router.huggingface.co/hf-inference/models/google/vit-large-patch16-224",
+                    "ViT-large");
+            if (!largeScores.isEmpty() &&
+                    (scores.isEmpty() || largeScores.get(0).score > scores.get(0).score)) {
+                scores = largeScores;
+                System.out.println("[AI] Using ViT-large result");
+            }
+        }
+
+        if (scores.isEmpty()) {
+            System.out.println("[AI] No scores returned from any model");
+            return result;
+        }
+
+        // Step 3: robust category mapping from top labels
+        String topLabel = scores.get(0).label;
+        CategoryPick categoryPick = pickCategoryFromLabels(scores);
+        String category = categoryPick.category;
+
+        // Step 4: derive condition from confidence + label coherence
+        String condition = deriveCondition(categoryPick.supportScore);
+
+        // Step 5: build display labels
+        StringBuilder labelsBuilder = new StringBuilder();
+        for (int i = 0; i < Math.min(6, scores.size()); i++) {
+            if (i > 0) labelsBuilder.append(", ");
+            labelsBuilder.append(scores.get(i).label)
+                    .append(" (")
+                    .append(Math.round(scores.get(i).score * 100))
+                    .append("%)");
+        }
+
+        int confidencePct = (int) Math.round(categoryPick.supportScore * 100);
+        System.out.println("[AI] category=" + category + " condition=" + condition +
+                " confidence=" + confidencePct + "% topLabel=" + topLabel +
+                " reason=" + categoryPick.reason);
+
+        result.put("category",   category);
+        result.put("condition",  condition);
+        result.put("rawLabels",  labelsBuilder.toString());
+        result.put("caption",    topLabel);
+        result.put("confidence", confidencePct + "%");
+        return result;
+    }
+
+    // ── ViT call with up to 3 retries on 503 cold-start ──────────────────────
+    private List<LabelScore> callVitWithRetry(HttpClient client, byte[] imageBytes,
+                                              String modelUrl, String modelName) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                List<LabelScore> scores = callVit(client, imageBytes, modelUrl, modelName);
+                if (!scores.isEmpty()) return scores;
+
+                if (attempt < 3) {
+                    System.out.println("[AI] " + modelName + " cold-starting, waiting 10s (attempt " + attempt + "/3)...");
+                    Thread.sleep(10000);
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("[AI] " + modelName + " attempt " + attempt + " error: " + e.getMessage());
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private List<LabelScore> callVit(HttpClient client, byte[] imageBytes,
+                                     String modelUrl, String modelName) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(modelUrl))
+                .header("Authorization", "Bearer " + hfApiKey)
+                .header("Content-Type", "application/octet-stream")
+                .timeout(Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(imageBytes))
+                .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        String body   = response.body();
+        int    status = response.statusCode();
+        System.out.println("[AI] " + modelName + " status=" + status +
+                " body=" + body.substring(0, Math.min(body.length(), 120)));
+
+        if (status == 503) return Collections.emptyList(); // cold start — retry
+
+        List<LabelScore> scores = new ArrayList<>();
+        if (status != 200) return scores;
+
+        JsonNode root = objectMapper.readTree(body);
+        if (!root.isArray()) return scores;
+
+        for (JsonNode node : root) {
+            if (!node.has("label")) continue;
+            String label = node.get("label").asText("").trim();
+            double score = node.has("score") ? node.get("score").asDouble(0.0) : 0.0;
+            if (!label.isEmpty()) {
+                scores.add(new LabelScore(label, score));
+            }
+        }
+        scores.sort((a, b) -> Double.compare(b.score, a.score));
+        return scores;
+    }
+
+    // ── Condition derivation from confidence ─────────────────────────────────
+    // High confidence = item is visually clean and distinct = better condition
+    // Low confidence  = cluttered/worn background = worse condition
+    // Keep condition logic explainable and demo-safe:
+    // confidence >80% => Good, >60% => Fair, else => Worn (Poor equivalent)
+    private String deriveCondition(double confidenceScore) {
+        if (confidenceScore > 0.95) return "Like New";
+        if (confidenceScore > 0.80) return "Good";
+        if (confidenceScore > 0.60) return "Fair";
+        return "Worn";
+    }
+
+    private String mapSingleLabel(String label) {
+        String lower = normalizeLabel(label);
+        for (Map.Entry<String, String> entry : LABEL_TO_CATEGORY.entrySet()) {
+            if (lower.contains(entry.getKey())) return entry.getValue();
+        }
+        return "Other";
+    }
+
+    private CategoryPick pickCategoryFromLabels(List<LabelScore> scores) {
+        if (scores == null || scores.isEmpty()) {
+            return new CategoryPick("Other", 0.0, "No labels");
+        }
+
+        // 1) Direct-priority keyword pass for highly recognizable hobby items.
+        int limit = Math.min(10, scores.size());
+        for (int i = 0; i < limit; i++) {
+            String normalized = normalizeLabel(scores.get(i).label);
+            for (String token : DIRECT_PRIORITY_KEYWORDS) {
+                if (!normalized.contains(token)) continue;
+                String mapped = mapSingleLabel(normalized);
+                if (!"Other".equals(mapped)) {
+                    return new CategoryPick(
+                            mapped,
+                            Math.max(scores.get(i).score, 0.72),
+                            "Direct priority keyword: " + token
+                    );
+                }
+            }
+        }
+
+        // 2) General weighted voting using all configured keywords.
+        Map<String, Double> bucket = new HashMap<>();
+        double bestSingleHit = 0.0;
+        int mappedHits = 0;
+        for (int i = 0; i < limit; i++) {
+            LabelScore ls = scores.get(i);
+            String normalized = normalizeLabel(ls.label);
+
+            // Top labels matter more; small rank decay keeps signal explainable.
+            double rankWeight = Math.max(0.45, 1.0 - (i * 0.08));
+
+            for (Map.Entry<String, String> entry : LABEL_TO_CATEGORY.entrySet()) {
+                if (!normalized.contains(entry.getKey())) continue;
+                mappedHits++;
+                String mappedCategory = entry.getValue();
+                // Add a small floor so very tiny HF scores can still classify correctly
+                // when the label text clearly matches a known hobby keyword.
+                double baseScore = Math.max(ls.score, 0.10);
+                double weighted = baseScore * rankWeight;
+                bucket.merge(mappedCategory, weighted, Double::sum);
+                bestSingleHit = Math.max(bestSingleHit, ls.score);
+            }
+        }
+
+        if (bucket.isEmpty()) {
+            return new CategoryPick("Other", scores.get(0).score, "No mapped hobby labels");
+        }
+
+        Map.Entry<String, Double> winner = bucket.entrySet()
+                .stream()
+                .max(Map.Entry.comparingByValue())
+                .orElse(null);
+        if (winner == null) {
+            return new CategoryPick("Other", scores.get(0).score, "No reliable mapped winner");
+        }
+
+        String category = winner.getKey();
+        double supportScore = Math.min(1.0, Math.max(bestSingleHit, winner.getValue()));
+        if (mappedHits >= 2) {
+            supportScore = Math.max(supportScore, 0.65);
+        }
+
+        // No hard "Other" fallback if we found a mapped hobby category.
+        // This keeps auto-fill useful for prototype demos.
+        return new CategoryPick(category, Math.max(supportScore, 0.62), "Weighted label consensus");
+    }
+
+    private String normalizeLabel(String label) {
+        if (label == null) return "";
+        String normalized = NON_ALNUM.matcher(label.toLowerCase()).replaceAll(" ").replaceAll("\\s+", " ").trim();
+        for (Map.Entry<String, String> entry : LABEL_NORMALIZATION.entrySet()) {
+            normalized = normalized.replace(entry.getKey(), entry.getValue());
+        }
+        return normalized;
+    }
+
+    // ── Save uploaded file to disk ────────────────────────────────────────────
+    private String saveFile(MultipartFile photo, Long itemId) throws IOException {
+        Path uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
+
+        String original  = photo.getOriginalFilename();
+        String extension = (original != null && original.contains("."))
+                ? original.substring(original.lastIndexOf(".")) : ".jpg";
+        String filename  = "item_" + itemId + "_" + System.currentTimeMillis() + extension;
+        Files.write(uploadPath.resolve(filename), photo.getBytes());
+        return "/uploads/" + filename;
+    }
+
+    private boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
+
+    // ── Simple value holder ───────────────────────────────────────────────────
+    private static class LabelScore {
+        final String label;
+        final double score;
+        LabelScore(String l, double s) { this.label = l; this.score = s; }
+    }
+
+    private static class CategoryPick {
+        final String category;
+        final double supportScore;
+        final String reason;
+        CategoryPick(String category, double supportScore, String reason) {
+            this.category = category;
+            this.supportScore = supportScore;
+            this.reason = reason;
+        }
+    }
+}
