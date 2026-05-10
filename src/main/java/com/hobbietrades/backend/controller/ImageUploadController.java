@@ -129,6 +129,7 @@ public class ImageUploadController {
             result.put("rawLabels",         ai.get("rawLabels"));
             result.put("caption",           ai.get("caption"));
             result.put("confidence",        ai.get("confidence"));
+            result.put("suggestedTitle",    ai.get("suggestedTitle"));
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
@@ -192,6 +193,7 @@ public class ImageUploadController {
             response.put("detectedCondition", ai.get("condition"));
             response.put("rawLabels",         ai.get("rawLabels"));
             response.put("caption",           ai.get("caption"));
+            response.put("suggestedTitle",    ai.get("suggestedTitle"));
             response.put("categoryUpdated",   catUpdated);
             response.put("conditionUpdated",  condUpdated);
             response.put("message",           "Photo uploaded and analyzed successfully");
@@ -219,6 +221,7 @@ public class ImageUploadController {
         result.put("rawLabels",  "");
         result.put("caption",    "");
         result.put("confidence", "0%");
+        result.put("suggestedTitle", "");
 
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
@@ -244,6 +247,7 @@ public class ImageUploadController {
 
         if (scores.isEmpty()) {
             System.out.println("[AI] No scores returned from any model");
+            result.put("suggestedTitle", titleFallbackForCategory(result.get("category")));
             return result;
         }
 
@@ -275,7 +279,63 @@ public class ImageUploadController {
         result.put("rawLabels",  labelsBuilder.toString());
         result.put("caption",    topLabel);
         result.put("confidence", confidencePct + "%");
+        result.put("suggestedTitle", buildSuggestedTitle(scores, category));
         return result;
+    }
+
+    /**
+     * Short listing title from ViT labels: first comma-separated clause, normalized,
+     * then title-cased for display (e.g. "grand piano, grand" → "Grand Piano").
+     */
+    private String buildSuggestedTitle(List<LabelScore> scores, String category) {
+        if (scores == null || scores.isEmpty()) {
+            return titleFallbackForCategory(category);
+        }
+        for (int i = 0; i < Math.min(4, scores.size()); i++) {
+            String segment = firstLabelSegment(scores.get(i).label);
+            if (segment == null || segment.length() < 2) continue;
+
+            String lower = segment.toLowerCase(Locale.ROOT);
+            lower = NON_ALNUM.matcher(lower).replaceAll(" ").replaceAll("\\s+", " ").trim();
+            lower = lower.replace("mike", "microphone").replace(" web site ", " ").replace(" web page ", " ");
+            for (Map.Entry<String, String> e : LABEL_NORMALIZATION.entrySet()) {
+                lower = lower.replace(e.getKey(), e.getValue());
+            }
+            lower = lower.trim();
+            if (lower.length() < 2 || lower.matches(".*\\b(site|page|monitor|screen)\\b.*")) {
+                continue;
+            }
+            return toTitleWords(lower);
+        }
+        return titleFallbackForCategory(category);
+    }
+
+    private String firstLabelSegment(String rawLabel) {
+        if (rawLabel == null || rawLabel.isBlank()) return null;
+        return rawLabel.split(",")[0].trim();
+    }
+
+    private String titleFallbackForCategory(String category) {
+        if (category == null || category.isBlank() || "Other".equals(category)) {
+            return "Hobby item";
+        }
+        return category + " item";
+    }
+
+    private String toTitleWords(String lowerSpacedPhrase) {
+        String[] words = lowerSpacedPhrase.trim().split("\\s+");
+        StringBuilder b = new StringBuilder();
+        for (String w : words) {
+            if (w.isEmpty()) continue;
+            if (b.length() > 0) b.append(' ');
+            if (w.length() == 1) {
+                b.append(w.toUpperCase(Locale.ROOT));
+            } else {
+                b.append(Character.toUpperCase(w.charAt(0)))
+                        .append(w.substring(1).toLowerCase(Locale.ROOT));
+            }
+        }
+        return b.length() == 0 ? "Hobby item" : b.toString();
     }
 
     // ── ViT call with up to 3 retries on 503 cold-start ──────────────────────
