@@ -238,6 +238,17 @@ public class TradeController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * GET /api/trades/for-you-signals?userId=1
+     * Categories & keywords inferred from items the user traded for (For You hero).
+     */
+    @GetMapping("/for-you-signals")
+    public ResponseEntity<Map<String, Object>> getForYouSignals(@RequestParam Long userId) {
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(matchingService.getForYouSignals(userOpt.get()));
+    }
+
     private void createStatusMessage(Trade trade, User sender, String content) {
         Message message = new Message();
         message.setTrade(trade);
