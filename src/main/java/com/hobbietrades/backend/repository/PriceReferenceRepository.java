@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface PriceReferenceRepository extends JpaRepository<PriceReference, Long> {
@@ -23,4 +24,7 @@ public interface PriceReferenceRepository extends JpaRepository<PriceReference, 
     // Get average price for a category and condition
     @Query("SELECT AVG(p.avgPrice) FROM PriceReference p WHERE p.category = :category AND p.conditionLabel = :condition")
     Double getAveragePriceByCategoryAndCondition(@Param("category") String category, @Param("condition") String condition);
+
+    Optional<PriceReference> findFirstByKeywordIgnoreCaseAndCategoryAndConditionLabel(
+            String keyword, String category, String conditionLabel);
 }
