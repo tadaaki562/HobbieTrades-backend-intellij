@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.repository.ItemRepository;
+import com.hobbietrades.backend.service.BrandModelResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -130,6 +131,9 @@ public class ImageUploadController {
             result.put("caption",           ai.get("caption"));
             result.put("confidence",        ai.get("confidence"));
             result.put("suggestedTitle",    ai.get("suggestedTitle"));
+            result.put("detectedBrand",     ai.get("detectedBrand"));
+            result.put("detectedModel",     ai.get("detectedModel"));
+            result.put("estimateKeyword",   ai.get("estimateKeyword"));
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
@@ -194,6 +198,9 @@ public class ImageUploadController {
             response.put("rawLabels",         ai.get("rawLabels"));
             response.put("caption",           ai.get("caption"));
             response.put("suggestedTitle",    ai.get("suggestedTitle"));
+            response.put("detectedBrand",     ai.get("detectedBrand"));
+            response.put("detectedModel",     ai.get("detectedModel"));
+            response.put("estimateKeyword",   ai.get("estimateKeyword"));
             response.put("categoryUpdated",   catUpdated);
             response.put("conditionUpdated",  condUpdated);
             response.put("message",           "Photo uploaded and analyzed successfully");
@@ -222,6 +229,9 @@ public class ImageUploadController {
         result.put("caption",    "");
         result.put("confidence", "0%");
         result.put("suggestedTitle", "");
+        result.put("detectedBrand", "");
+        result.put("detectedModel", "");
+        result.put("estimateKeyword", "");
 
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
@@ -247,7 +257,11 @@ public class ImageUploadController {
 
         if (scores.isEmpty()) {
             System.out.println("[AI] No scores returned from any model");
-            result.put("suggestedTitle", titleFallbackForCategory(result.get("category")));
+            BrandModelResolver.Hint hint = BrandModelResolver.resolve(List.of(), result.get("category"));
+            result.put("suggestedTitle", hint.title());
+            result.put("detectedBrand", "");
+            result.put("detectedModel", "");
+            result.put("estimateKeyword", hint.estimateKeyword());
             return result;
         }
 
@@ -279,35 +293,20 @@ public class ImageUploadController {
         result.put("rawLabels",  labelsBuilder.toString());
         result.put("caption",    topLabel);
         result.put("confidence", confidencePct + "%");
-        result.put("suggestedTitle", buildSuggestedTitle(scores, category));
+        BrandModelResolver.Hint hint = resolveBrandModel(scores, category);
+        result.put("suggestedTitle", hint.title());
+        result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
+        result.put("detectedModel", hint.model() != null ? hint.model() : "");
+        result.put("estimateKeyword", hint.estimateKeyword());
         return result;
     }
 
-    /**
-     * Short listing title from ViT labels: first comma-separated clause, normalized,
-     * then title-cased for display (e.g. "grand piano, grand" → "Grand Piano").
-     */
-    private String buildSuggestedTitle(List<LabelScore> scores, String category) {
-        if (scores == null || scores.isEmpty()) {
-            return titleFallbackForCategory(category);
+    private BrandModelResolver.Hint resolveBrandModel(List<LabelScore> scores, String category) {
+        List<BrandModelResolver.LabelInput> inputs = new ArrayList<>();
+        for (LabelScore ls : scores) {
+            inputs.add(new BrandModelResolver.LabelInput(ls.label, ls.score));
         }
-        for (int i = 0; i < Math.min(4, scores.size()); i++) {
-            String segment = firstLabelSegment(scores.get(i).label);
-            if (segment == null || segment.length() < 2) continue;
-
-            String lower = segment.toLowerCase(Locale.ROOT);
-            lower = NON_ALNUM.matcher(lower).replaceAll(" ").replaceAll("\\s+", " ").trim();
-            lower = lower.replace("mike", "microphone").replace(" web site ", " ").replace(" web page ", " ");
-            for (Map.Entry<String, String> e : LABEL_NORMALIZATION.entrySet()) {
-                lower = lower.replace(e.getKey(), e.getValue());
-            }
-            lower = lower.trim();
-            if (lower.length() < 2 || lower.matches(".*\\b(site|page|monitor|screen)\\b.*")) {
-                continue;
-            }
-            return toTitleWords(lower);
-        }
-        return titleFallbackForCategory(category);
+        return BrandModelResolver.resolve(inputs, category);
     }
 
     private String firstLabelSegment(String rawLabel) {

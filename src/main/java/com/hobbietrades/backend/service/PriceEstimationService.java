@@ -109,10 +109,17 @@ public class PriceEstimationService {
         m.put("skateboard", 3200.0);
         m.put("tennis racket", 4200.0);
         m.put("badminton racket", 2800.0);
+        m.put("fender stratocaster", 16500.0);
+        m.put("fender telecaster", 14200.0);
+        m.put("gibson les paul", 28500.0);
+        m.put("yamaha fg", 7500.0);
+        m.put("ibanez", 9800.0);
         m.put("guitar", 9200.0);
         m.put("piano", 45000.0);
+        m.put("canon eos", 28500.0);
         m.put("canon", 22000.0);
         m.put("nikon", 23500.0);
+        m.put("sony alpha", 52000.0);
         m.put("camera", 15500.0);
         m.put("switch", 11800.0);
         CURATED_PHP_BASE_GOOD.addAll(m.entrySet());
