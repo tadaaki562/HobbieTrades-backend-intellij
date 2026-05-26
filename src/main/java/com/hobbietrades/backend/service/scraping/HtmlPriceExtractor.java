@@ -9,8 +9,10 @@ import java.util.regex.Pattern;
 public final class HtmlPriceExtractor {
 
     private static final Pattern PESO = Pattern.compile("₱\\s*([\\d,]+(?:\\.\\d{2})?)");
+    private static final Pattern PHP_TEXT = Pattern.compile("PHP\\s*([\\d,]+(?:\\.\\d{2})?)", Pattern.CASE_INSENSITIVE);
     private static final Pattern JSON_PRICE = Pattern.compile("\"price\"\\s*:\\s*([\\d.]+)");
     private static final Pattern DATA_PRICE = Pattern.compile("data-price=\"(\\d+)\"");
+    private static final Pattern SPAN_PRICE = Pattern.compile("class=\"[^\"]*price[^\"]*\"[^>]*>\\s*([\\d,]+)");
 
     private HtmlPriceExtractor() {}
 
@@ -18,16 +20,29 @@ public final class HtmlPriceExtractor {
         List<Double> prices = new ArrayList<>();
         if (html == null || html.isBlank()) return prices;
 
-        for (Pattern p : List.of(PESO, JSON_PRICE, DATA_PRICE)) {
+        prices.addAll(ShopeePhPriceScraper.extractShopeePrices(html));
+        prices.addAll(AmazonPhPriceScraper.extractAmazonPrices(html));
+
+        for (Pattern p : List.of(PESO, PHP_TEXT, JSON_PRICE, DATA_PRICE, SPAN_PRICE)) {
             Matcher m = p.matcher(html);
             while (m.find()) {
-                double v = parseAmount(m.group(1));
-                if (v >= 150 && v <= 500_000) {
-                    prices.add(v);
-                }
+                try {
+                    double v = parseAmount(m.group(1));
+                    if (v >= 150 && v <= 500_000) {
+                        prices.add(v);
+                    }
+                } catch (NumberFormatException ignored) {}
             }
         }
-        return prices;
+        return dedupe(prices);
+    }
+
+    private static List<Double> dedupe(List<Double> prices) {
+        List<Double> out = new ArrayList<>();
+        for (Double p : prices) {
+            if (!out.contains(p)) out.add(p);
+        }
+        return out;
     }
 
     public static double median(List<Double> values) {

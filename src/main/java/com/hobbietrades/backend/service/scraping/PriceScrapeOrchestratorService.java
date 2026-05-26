@@ -91,26 +91,48 @@ public class PriceScrapeOrchestratorService {
             out.put("message", "Scraping disabled");
             return out;
         }
-        boolean ok = scrapeAndPersist(keyword, category);
-        out.put("success", ok);
+        Optional<ScrapeSample> sample = scrapeFirst(keyword);
+        if (sample.isEmpty()) {
+            out.put("success", false);
+            out.put("keyword", keyword);
+            out.put("category", category);
+            out.put("message", "No prices extracted from marketplaces.");
+            return out;
+        }
+        persistSample(sample.get(), category);
+        ScrapeSample s = sample.get();
+        boolean fallback = s.source().contains("fallback");
+        out.put("success", true);
         out.put("keyword", keyword);
         out.put("category", category);
-        out.put("message", ok ? "Saved scraped averages to price_reference" : "No prices extracted (site may have blocked request)");
+        out.put("source", s.source());
+        out.put("medianPrice", s.medianPrice());
+        out.put("message", fallback
+                ? "Live sites blocked this server; saved PH research baseline prices instead."
+                : "Saved prices from " + s.source());
         return out;
     }
 
-    private boolean scrapeAndPersist(String keyword, String category) {
-        Optional<ScrapeSample> sample = Optional.empty();
+    private Optional<ScrapeSample> scrapeFirst(String keyword) {
         for (MarketplacePriceScraper scraper : scrapers) {
-            sample = scraper.scrape(keyword);
-            if (sample.isPresent()) break;
+            Optional<ScrapeSample> sample = scraper.scrape(keyword);
+            if (sample.isPresent()) return sample;
         }
+        return Optional.empty();
+    }
+
+    private boolean scrapeAndPersist(String keyword, String category) {
+        Optional<ScrapeSample> sample = scrapeFirst(keyword);
         if (sample.isEmpty()) {
             return false;
         }
+        persistSample(sample.get(), category);
+        return true;
+    }
 
-        ScrapeSample s = sample.get();
+    private void persistSample(ScrapeSample s, String category) {
         double goodBase = s.medianPrice();
+        String keyword = s.keyword();
 
         for (String condition : CONDITIONS) {
             double factor = CONDITION_FACTOR.getOrDefault(condition, 0.65);
@@ -129,7 +151,6 @@ public class PriceScrapeOrchestratorService {
             ref.setScrapedAt(LocalDateTime.now());
             priceReferenceRepository.save(ref);
         }
-        return true;
     }
 
     public long countReferences() {

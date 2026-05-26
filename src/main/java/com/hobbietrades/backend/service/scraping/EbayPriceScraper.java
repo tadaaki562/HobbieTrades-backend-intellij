@@ -13,7 +13,7 @@ import java.util.Optional;
  * Fallback international marketplace scrape (used when PH sites block datacenter IPs).
  */
 @Component
-@Order(2)
+@Order(4)
 public class EbayPriceScraper implements MarketplacePriceScraper {
 
     private final ScrapingHttpClient httpClient;

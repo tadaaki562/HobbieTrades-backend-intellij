@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Component
-@Order(1)
+@Order(3)
 public class LazadaPhPriceScraper implements MarketplacePriceScraper {
 
     private final ScrapingHttpClient httpClient;

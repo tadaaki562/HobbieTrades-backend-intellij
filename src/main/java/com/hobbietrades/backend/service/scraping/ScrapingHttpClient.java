@@ -13,8 +13,10 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class ScrapingHttpClient {
 
+    /** Browser-like UA reduces blocks on Shopee/Lazada/Amazon vs obvious bot strings. */
     public static final String USER_AGENT =
-            "HobbieTradesBot/1.0 (+https://hobbietrades.netlify.app; educational marketplace research)";
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                    + "Chrome/122.0.0.0 Safari/537.36 HobbieTradesResearch/1.0";
 
     @Value("${hobbietrades.scrape.delay-ms:2500}")
     private long delayMs;

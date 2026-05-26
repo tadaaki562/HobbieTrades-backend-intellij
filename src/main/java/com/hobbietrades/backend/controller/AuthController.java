@@ -2,6 +2,7 @@ package com.hobbietrades.backend.controller;
 
 import com.hobbietrades.backend.model.User;
 import com.hobbietrades.backend.repository.UserRepository;
+import com.hobbietrades.backend.util.PasswordValidator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,6 +36,12 @@ public class AuthController {
         if (userRepository.existsByEmail(email)) {
             response.put("success", false);
             response.put("message", "Email already registered.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        if (!PasswordValidator.isValid(password)) {
+            response.put("success", false);
+            response.put("message", String.join(" ", PasswordValidator.validate(password)));
             return ResponseEntity.badRequest().body(response);
         }
 
