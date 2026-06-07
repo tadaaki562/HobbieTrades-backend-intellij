@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.service.BrandModelResolver;
+import com.hobbietrades.backend.service.RoboflowVisionService;
 import com.hobbietrades.backend.util.HobbyCategories;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,6 +28,10 @@ public class ImageUploadController {
 
     @Autowired
     private ItemRepository itemRepository;
+
+    @Autowired
+    private RoboflowVisionService roboflowVisionService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${huggingface.api.key}")
@@ -109,6 +114,7 @@ public class ImageUploadController {
             result.put("detectedBrand",     ai.get("detectedBrand"));
             result.put("detectedModel",     ai.get("detectedModel"));
             result.put("estimateKeyword",   ai.get("estimateKeyword"));
+            result.put("detectionSource",   ai.getOrDefault("detectionSource", "huggingface"));
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
@@ -206,9 +212,9 @@ public class ImageUploadController {
             response.put("message", "Item not found: " + id);
             return ResponseEntity.status(404).body(response);
         }
-        if (photos == null || photos.length != 4) {
+        if (photos == null || photos.length != 5) {
             response.put("success", false);
-            response.put("message", "Upload exactly 4 hobby authentication photos (in addition to your main item photo).");
+            response.put("message", "Upload exactly 5 hobby proof photos (you using your hobby).");
             return ResponseEntity.badRequest().body(response);
         }
 
@@ -218,10 +224,10 @@ public class ImageUploadController {
             for (int i = 0; i < photos.length; i++) {
                 if (photos[i] == null || photos[i].isEmpty()) {
                     response.put("success", false);
-                    response.put("message", "Hobby photo " + (i + 2) + " is missing.");
+                    response.put("message", "Hobby photo " + (i + 1) + " is missing.");
                     return ResponseEntity.badRequest().body(response);
                 }
-                urls.add(saveGalleryFile(photos[i], id, i + 2));
+                urls.add(saveGalleryFile(photos[i], id, i + 1));
             }
             item.setGalleryUrls(String.join("|", urls));
             itemRepository.save(item);
@@ -240,7 +246,19 @@ public class ImageUploadController {
     // Core AI logic — calls ViT (base + large), maps labels, derives condition
     // ════════════════════════════════════════════════════════════════════════
     private Map<String, String> runAI(byte[] imageBytes) throws Exception {
-        System.out.println("[AI] Starting analysis, key prefix: " + hfApiKey.substring(0, 8) + "...");
+        // Prefer your custom Roboflow models (camera + instruments) when configured
+        if (roboflowVisionService.isConfigured()) {
+            Map<String, String> rf = roboflowVisionService.analyze(imageBytes);
+            if (rf != null && !rf.isEmpty()) {
+                System.out.println("[AI] Using Roboflow: " + rf.get("detectionSource")
+                        + " → " + rf.get("category") + " / " + rf.get("suggestedTitle"));
+                return rf;
+            }
+            System.out.println("[AI] Roboflow returned no confident match — falling back to Hugging Face ViT");
+        }
+
+        System.out.println("[AI] Starting Hugging Face analysis, key prefix: "
+                + (hfApiKey != null && hfApiKey.length() >= 8 ? hfApiKey.substring(0, 8) : "?") + "...");
 
         Map<String, String> result = new HashMap<>();
         result.put("category",   "Other");
@@ -318,6 +336,7 @@ public class ImageUploadController {
         result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
         result.put("detectedModel", hint.model() != null ? hint.model() : "");
         result.put("estimateKeyword", hint.estimateKeyword());
+        result.put("detectionSource", "huggingface");
         return result;
     }
 
