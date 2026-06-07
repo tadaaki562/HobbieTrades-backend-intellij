@@ -1,6 +1,7 @@
 package com.hobbietrades.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.hobbietrades.backend.service.roboflow.RoboflowDetectionModelClient;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowClient;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowException;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowPredictionParser;
@@ -12,8 +13,8 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 
 /**
- * Item vision via Roboflow Workflows (Detect and Classify 2 = cameras, 3 = instruments),
- * with optional legacy single-model fallback, then Hugging Face in ImageUploadController.
+ * Item vision via Roboflow Workflows, with direct detection-model fallback when a workflow
+ * step fails (e.g. misconfigured car-colors classifier inside Detect and Classify 3).
  */
 @Service
 public class RoboflowVisionService {
@@ -22,6 +23,9 @@ public class RoboflowVisionService {
 
     @Autowired
     private RoboflowWorkflowClient workflowClient;
+
+    @Autowired
+    private RoboflowDetectionModelClient detectionModelClient;
 
     @Value("${roboflow.enabled:false}")
     private boolean enabled;
@@ -35,29 +39,38 @@ public class RoboflowVisionService {
     @Value("${roboflow.instruments.workflow-id:detect-and-classify-3}")
     private String instrumentsWorkflowId;
 
-    /** Legacy single-model deploy (optional) */
+    /** false = skip broken detect-and-classify-2 workflow; use camera-detection model directly */
+    @Value("${roboflow.camera.use-workflow:false}")
+    private boolean cameraUseWorkflow;
+
+    @Value("${roboflow.instruments.use-workflow:true}")
+    private boolean instrumentsUseWorkflow;
+
+    @Value("${roboflow.workflow.fallback-on-error:true}")
+    private boolean fallbackOnError;
+
     @Value("${roboflow.camera.project:}")
     private String cameraProject;
 
     @Value("${roboflow.camera.version:1}")
     private int cameraVersion;
 
-    @Value("${roboflow.instruments.project:${roboflow.guitar.project:}}")
+    @Value("${roboflow.instruments.project:musical-instruments-detection-kemni-bzqvi}")
     private String instrumentsProject;
 
-    @Value("${roboflow.instruments.version:${roboflow.guitar.version:1}}")
+    @Value("${roboflow.instruments.version:2}")
     private int instrumentsVersion;
 
     public boolean isConfigured() {
         return enabled && apiKey != null && !apiKey.isBlank()
-                && (hasWorkflows() || hasLegacyModels());
+                && (hasWorkflows() || hasDetectionModels());
     }
 
     private boolean hasWorkflows() {
         return !cameraWorkflowId.isBlank() || !instrumentsWorkflowId.isBlank();
     }
 
-    private boolean hasLegacyModels() {
+    private boolean hasDetectionModels() {
         return !cameraProject.isBlank() || !instrumentsProject.isBlank();
     }
 
@@ -68,18 +81,11 @@ public class RoboflowVisionService {
 
         List<PredictionHit> hits = new ArrayList<>();
 
-        if (hasWorkflows()) {
-            if (!cameraWorkflowId.isBlank()) {
-                hits.addAll(runWorkflow(cameraWorkflowId, imageBytes, "Cameras"));
-            }
-            if (!instrumentsWorkflowId.isBlank()) {
-                hits.addAll(runWorkflow(instrumentsWorkflowId, imageBytes, "Instruments"));
-            }
-        }
+        hits.addAll(runCategory(cameraUseWorkflow, cameraWorkflowId, cameraProject, cameraVersion,
+                imageBytes, "Cameras"));
 
-        if (hits.isEmpty() && hasLegacyModels()) {
-            hits.addAll(runLegacyModels(imageBytes));
-        }
+        hits.addAll(runCategory(instrumentsUseWorkflow, instrumentsWorkflowId, instrumentsProject,
+                instrumentsVersion, imageBytes, "Instruments"));
 
         if (hits.isEmpty()) {
             return null;
@@ -94,30 +100,76 @@ public class RoboflowVisionService {
         return buildAnalysisMap(hits, best);
     }
 
+    private List<PredictionHit> runCategory(
+            boolean useWorkflow, String workflowId, String detectionProject, int detectionVersion,
+            byte[] imageBytes, String category) {
+
+        if (useWorkflow && workflowId != null && !workflowId.isBlank()) {
+            return runWorkflowOrFallback(workflowId, imageBytes, category, detectionProject, detectionVersion);
+        }
+        if (detectionProject != null && !detectionProject.isBlank()) {
+            return runDetectionModel(detectionProject, detectionVersion, imageBytes, category);
+        }
+        return List.of();
+    }
+
+    private List<PredictionHit> runWorkflowOrFallback(
+            String workflowId, byte[] imageBytes, String category,
+            String fallbackProject, int fallbackVersion) {
+
+        List<PredictionHit> fromWorkflow = runWorkflow(workflowId, imageBytes, category);
+        if (!fromWorkflow.isEmpty()) {
+            return fromWorkflow;
+        }
+
+        if (fallbackOnError && fallbackProject != null && !fallbackProject.isBlank()) {
+            System.out.println("[Roboflow] workflow " + workflowId
+                    + " unavailable — using detection model " + fallbackProject + "/" + fallbackVersion);
+            return runDetectionModel(fallbackProject, fallbackVersion, imageBytes, category);
+        }
+        return List.of();
+    }
+
     private List<PredictionHit> runWorkflow(String workflowId, byte[] imageBytes, String category) {
         try {
             JsonNode response = workflowClient.runWorkflow(workflowId, imageBytes, Map.of());
-            List<ParsedPrediction> preds = RoboflowWorkflowPredictionParser.extractPredictions(response);
-            List<PredictionHit> hits = new ArrayList<>();
-            for (ParsedPrediction p : preds) {
-                hits.add(new PredictionHit(p.className(), p.confidence(), category,
-                        "workflow:" + workflowId));
-            }
-            if (!hits.isEmpty()) {
-                System.out.println("[Roboflow] workflow " + workflowId + " → "
-                        + hits.size() + " prediction(s), top=" + hits.get(0).className()
-                        + " (" + Math.round(hits.get(0).confidence() * 100) + "%)");
-            }
-            return hits;
+            return toHits(RoboflowWorkflowPredictionParser.extractPredictions(response), category,
+                    "workflow:" + workflowId);
         } catch (RoboflowWorkflowException e) {
-            System.out.println("[Roboflow] workflow " + workflowId + " failed: " + e.getMessage());
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("car-colors")) {
+                System.out.println("[Roboflow] workflow " + workflowId
+                        + " failed: classification step uses wrong model (car-colors). "
+                        + "Fix workflow in Roboflow or use detection model fallback.");
+            } else {
+                System.out.println("[Roboflow] workflow " + workflowId + " failed: " + msg);
+            }
             return List.of();
         }
     }
 
-  private List<PredictionHit> runLegacyModels(byte[] imageBytes) {
-        // Kept for backward compatibility with ROBOFLOW_*_PROJECT env vars
-        return List.of();
+    private List<PredictionHit> runDetectionModel(
+            String project, int version, byte[] imageBytes, String category) {
+
+        List<ParsedPrediction> preds = detectionModelClient.detect(project, version, imageBytes);
+        List<PredictionHit> hits = toHits(preds, category, "model:" + project + "/" + version);
+        if (!hits.isEmpty()) {
+            System.out.println("[Roboflow] model " + project + "/" + version + " → top="
+                    + hits.get(0).className() + " (" + Math.round(hits.get(0).confidence() * 100) + "%)");
+        }
+        return hits;
+    }
+
+    private List<PredictionHit> toHits(List<ParsedPrediction> preds, String category, String source) {
+        List<PredictionHit> hits = new ArrayList<>();
+        for (ParsedPrediction p : preds) {
+            hits.add(new PredictionHit(p.className(), p.confidence(), category, source));
+        }
+        if (!hits.isEmpty() && source.startsWith("workflow:")) {
+            System.out.println("[Roboflow] " + source + " → " + hits.size() + " prediction(s), top="
+                    + hits.get(0).className() + " (" + Math.round(hits.get(0).confidence() * 100) + "%)");
+        }
+        return hits;
     }
 
     private Map<String, String> buildAnalysisMap(List<PredictionHit> hits, PredictionHit best) {
