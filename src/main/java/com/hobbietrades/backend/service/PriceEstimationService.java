@@ -28,7 +28,7 @@ public class PriceEstimationService {
     }
 
     private static final Set<String> CATEGORY_WHITELIST = Set.of(
-            "Cameras", "Instruments", "Sports", "Gaming", "Art", "Craft", "Other"
+            "Cameras", "Instruments"
     );
 
     private static final Map<String, String> KEYWORD_CATEGORY_HINTS = new LinkedHashMap<>();
@@ -200,11 +200,6 @@ public class PriceEstimationService {
         Map<String, Double> categoryBasePrices = new HashMap<>();
         categoryBasePrices.put("Cameras", 15000.0);
         categoryBasePrices.put("Instruments", 6000.0);
-        categoryBasePrices.put("Sports", 3000.0);
-        categoryBasePrices.put("Gaming", 14000.0);
-        categoryBasePrices.put("Art", 2500.0);
-        categoryBasePrices.put("Craft", 1200.0);
-        categoryBasePrices.put("Other", 2000.0);
 
         double basePrice = categoryBasePrices.getOrDefault(safeCategory, 2000.0);
         double multiplier = CONDITION_MULTIPLIERS.getOrDefault(safeCondition, 0.50);

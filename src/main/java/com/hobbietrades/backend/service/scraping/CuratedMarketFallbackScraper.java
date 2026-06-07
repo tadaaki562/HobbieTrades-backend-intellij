@@ -1,5 +1,6 @@
 package com.hobbietrades.backend.service.scraping;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +16,7 @@ import java.util.Optional;
  */
 @Component
 @Order(99)
+@ConditionalOnProperty(name = "hobbietrades.scrape.provider", havingValue = "legacy")
 public class CuratedMarketFallbackScraper implements MarketplacePriceScraper {
 
     private static final Map<String, Double> KEYWORD_GOOD_PHP = new LinkedHashMap<>();

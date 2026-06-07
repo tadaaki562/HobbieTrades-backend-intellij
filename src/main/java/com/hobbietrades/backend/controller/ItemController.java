@@ -4,6 +4,7 @@ import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.model.User;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.repository.UserRepository;
+import com.hobbietrades.backend.util.HobbyCategories;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -73,11 +74,18 @@ public class ItemController {
             return ResponseEntity.badRequest().body(response);
         }
 
+        String category = body.get("category").toString();
+        if (!HobbyCategories.isAllowed(category)) {
+            response.put("success", false);
+            response.put("message", "Only Cameras and Instruments categories are supported.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
         Item item = new Item();
         item.setUser(userOpt.get());
         item.setTitle(body.get("title").toString());
         item.setDescription(body.get("description").toString());
-        item.setCategory(body.get("category").toString());
+        item.setCategory(category);
         item.setConditionLabel(body.get("conditionLabel").toString());
         item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
         if (body.get("lookingFor") != null) item.setLookingFor(body.get("lookingFor").toString());
@@ -117,7 +125,15 @@ public class ItemController {
 
         if (body.get("title")          != null) item.setTitle(body.get("title").toString());
         if (body.get("description")    != null) item.setDescription(body.get("description").toString());
-        if (body.get("category")       != null) item.setCategory(body.get("category").toString());
+        if (body.get("category") != null) {
+            String cat = body.get("category").toString();
+            if (!HobbyCategories.isAllowed(cat)) {
+                response.put("success", false);
+                response.put("message", "Only Cameras and Instruments categories are supported.");
+                return ResponseEntity.badRequest().body(response);
+            }
+            item.setCategory(cat);
+        }
         if (body.get("conditionLabel") != null) item.setConditionLabel(body.get("conditionLabel").toString());
         if (body.get("estimatedValue") != null) item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
         if (body.get("lookingFor")     != null) item.setLookingFor(body.get("lookingFor").toString());

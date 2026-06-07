@@ -17,12 +17,7 @@ public class PriceScrapeOrchestratorService {
 
     private static final Map<String, List<String>> CATEGORY_KEYWORDS = Map.of(
             "Cameras", List.of("dslr camera", "mirrorless camera", "canon camera", "gopro"),
-            "Instruments", List.of("acoustic guitar", "electric guitar", "digital piano", "violin"),
-            "Gaming", List.of("nintendo switch", "ps5 console", "xbox controller", "gaming headset"),
-            "Sports", List.of("mountain bike", "skateboard", "tennis racket", "basketball"),
-            "Art", List.of("acrylic paint set", "canvas easel", "paint brush set"),
-            "Craft", List.of("sewing machine", "crochet yarn", "knitting kit"),
-            "Other", List.of("hobby kit", "collectible figure", "trading cards")
+            "Instruments", List.of("electric guitar", "acoustic guitar", "digital piano", "violin")
     );
 
     private static final Map<String, Double> CONDITION_FACTOR = Map.of(
@@ -96,7 +91,7 @@ public class PriceScrapeOrchestratorService {
             out.put("success", false);
             out.put("keyword", keyword);
             out.put("category", category);
-            out.put("message", "No prices extracted from marketplaces.");
+            out.put("message", "No prices extracted from Facebook public pages.");
             return out;
         }
         persistSample(sample.get(), category);

@@ -35,6 +35,10 @@ public class Item {
     @Column(name = "photo_url")
     private String photoUrl;
 
+    /** Pipe-separated URLs for hobby authentication photos (slots 2–5). */
+    @Column(name = "gallery_urls", columnDefinition = "TEXT")
+    private String galleryUrls;
+
     @Column(name = "is_available")
     private Boolean isAvailable = true;
 
@@ -76,6 +80,9 @@ public class Item {
 
     public String getPhotoUrl() { return photoUrl; }
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
+    public String getGalleryUrls() { return galleryUrls; }
+    public void setGalleryUrls(String galleryUrls) { this.galleryUrls = galleryUrls; }
 
     public Boolean getIsAvailable() { return isAvailable; }
     public void setIsAvailable(Boolean isAvailable) { this.isAvailable = isAvailable; }

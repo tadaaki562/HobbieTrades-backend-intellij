@@ -17,11 +17,16 @@ public final class HtmlPriceExtractor {
     private HtmlPriceExtractor() {}
 
     public static List<Double> extractPrices(String html) {
-        List<Double> prices = new ArrayList<>();
-        if (html == null || html.isBlank()) return prices;
-
+        List<Double> prices = new ArrayList<>(extractGenericPrices(html));
         prices.addAll(ShopeePhPriceScraper.extractShopeePrices(html));
         prices.addAll(AmazonPhPriceScraper.extractAmazonPrices(html));
+        return dedupe(prices);
+    }
+
+    /** Peso / PHP patterns only — used for Facebook and other generic HTML. */
+    public static List<Double> extractGenericPrices(String html) {
+        List<Double> prices = new ArrayList<>();
+        if (html == null || html.isBlank()) return prices;
 
         for (Pattern p : List.of(PESO, PHP_TEXT, JSON_PRICE, DATA_PRICE, SPAN_PRICE)) {
             Matcher m = p.matcher(html);

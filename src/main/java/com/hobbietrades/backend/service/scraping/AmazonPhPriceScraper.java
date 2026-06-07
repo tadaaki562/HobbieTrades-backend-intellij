@@ -1,6 +1,7 @@
 package com.hobbietrades.backend.service.scraping;
 
 import org.jsoup.nodes.Document;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,7 @@ import java.util.regex.Pattern;
 
 @Component
 @Order(2)
+@ConditionalOnProperty(name = "hobbietrades.scrape.provider", havingValue = "legacy")
 public class AmazonPhPriceScraper implements MarketplacePriceScraper {
 
     private static final Pattern A_PRICE_WHOLE = Pattern.compile(

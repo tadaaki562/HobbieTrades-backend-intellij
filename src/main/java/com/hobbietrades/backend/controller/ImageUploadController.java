@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.service.BrandModelResolver;
+import com.hobbietrades.backend.util.HobbyCategories;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -48,27 +49,6 @@ public class ImageUploadController {
                 "tripod","binoculars","telescope","microscope"}) {
             LABEL_TO_CATEGORY.put(k, "Cameras");
         }
-        // Gaming
-        for (String k : new String[]{"joystick","gamepad","controller","nintendo",
-                "playstation","xbox","console","cartridge","arcade"}) {
-            LABEL_TO_CATEGORY.put(k, "Gaming");
-        }
-        // Sports
-        for (String k : new String[]{"basketball","football","volleyball","tennis ball",
-                "tennis racket","badminton","boxing glove","dumbbell","bicycle",
-                "skateboard","surfboard","ski","snowboard","soccer ball","golf","bow"}) {
-            LABEL_TO_CATEGORY.put(k, "Sports");
-        }
-        // Art
-        for (String k : new String[]{"paintbrush","palette","crayon","pencil box",
-                "canvas","easel","watercolor","acrylic","pastel","marker"}) {
-            LABEL_TO_CATEGORY.put(k, "Art");
-        }
-        // Craft
-        for (String k : new String[]{"sewing machine","knitting","crochet","yarn",
-                "fabric","thread","needle","embroidery","beads","loom"}) {
-            LABEL_TO_CATEGORY.put(k, "Craft");
-        }
     }
 
     private static final Map<String, String> LABEL_NORMALIZATION = new LinkedHashMap<>();
@@ -105,11 +85,6 @@ public class ImageUploadController {
     static {
         PH_VALUE_RANGES.put("Instruments", new int[]{500,  1500,  5000, 18000});
         PH_VALUE_RANGES.put("Cameras",     new int[]{800,  2500,  7000, 20000});
-        PH_VALUE_RANGES.put("Gaming",      new int[]{400,  1200,  4000, 12000});
-        PH_VALUE_RANGES.put("Sports",      new int[]{300,  900,   2500,  7000});
-        PH_VALUE_RANGES.put("Art",         new int[]{200,  600,   1500,  4000});
-        PH_VALUE_RANGES.put("Craft",       new int[]{150,  450,   1200,  3500});
-        PH_VALUE_RANGES.put("Other",       new int[]{200,  600,   1500,  4000});
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -214,6 +189,51 @@ public class ImageUploadController {
         }
 
         return ResponseEntity.ok(response);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // POST /api/items/{id}/upload-gallery — hobby authentication photos (slots 2–5)
+    // ════════════════════════════════════════════════════════════════════════
+    @PostMapping("/{id}/upload-gallery")
+    public ResponseEntity<Map<String, Object>> uploadGallery(
+            @PathVariable Long id,
+            @RequestParam("photos") MultipartFile[] photos) {
+
+        Map<String, Object> response = new HashMap<>();
+        Optional<Item> itemOpt = itemRepository.findById(id);
+        if (itemOpt.isEmpty()) {
+            response.put("success", false);
+            response.put("message", "Item not found: " + id);
+            return ResponseEntity.status(404).body(response);
+        }
+        if (photos == null || photos.length != 4) {
+            response.put("success", false);
+            response.put("message", "Upload exactly 4 hobby authentication photos (in addition to your main item photo).");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        Item item = itemOpt.get();
+        List<String> urls = new ArrayList<>();
+        try {
+            for (int i = 0; i < photos.length; i++) {
+                if (photos[i] == null || photos[i].isEmpty()) {
+                    response.put("success", false);
+                    response.put("message", "Hobby photo " + (i + 2) + " is missing.");
+                    return ResponseEntity.badRequest().body(response);
+                }
+                urls.add(saveGalleryFile(photos[i], id, i + 2));
+            }
+            item.setGalleryUrls(String.join("|", urls));
+            itemRepository.save(item);
+            response.put("success", true);
+            response.put("galleryUrls", urls);
+            response.put("message", "Hobby authentication photos saved.");
+            return ResponseEntity.ok(response);
+        } catch (IOException e) {
+            response.put("success", false);
+            response.put("message", "Gallery save failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -412,12 +432,15 @@ public class ImageUploadController {
         for (Map.Entry<String, String> entry : LABEL_TO_CATEGORY.entrySet()) {
             if (lower.contains(entry.getKey())) return entry.getValue();
         }
-        return "Other";
+        if (lower.contains("camera") || lower.contains("lens") || lower.contains("dslr")) {
+            return "Cameras";
+        }
+        return "Instruments";
     }
 
     private CategoryPick pickCategoryFromLabels(List<LabelScore> scores) {
         if (scores == null || scores.isEmpty()) {
-            return new CategoryPick("Other", 0.0, "No labels");
+            return new CategoryPick("Instruments", 0.0, "No labels — default Instruments");
         }
 
         // 1) Direct-priority keyword pass for highly recognizable hobby items.
@@ -427,7 +450,7 @@ public class ImageUploadController {
             for (String token : DIRECT_PRIORITY_KEYWORDS) {
                 if (!normalized.contains(token)) continue;
                 String mapped = mapSingleLabel(normalized);
-                if (!"Other".equals(mapped)) {
+                if (HobbyCategories.isAllowed(mapped)) {
                     return new CategoryPick(
                             mapped,
                             Math.max(scores.get(i).score, 0.72),
@@ -462,7 +485,7 @@ public class ImageUploadController {
         }
 
         if (bucket.isEmpty()) {
-            return new CategoryPick("Other", scores.get(0).score, "No mapped hobby labels");
+            return new CategoryPick(guessAllowedCategory(scores), scores.get(0).score, "No mapped labels — guessed from top label");
         }
 
         Map.Entry<String, Double> winner = bucket.entrySet()
@@ -470,10 +493,13 @@ public class ImageUploadController {
                 .max(Map.Entry.comparingByValue())
                 .orElse(null);
         if (winner == null) {
-            return new CategoryPick("Other", scores.get(0).score, "No reliable mapped winner");
+            return new CategoryPick(guessAllowedCategory(scores), scores.get(0).score, "No reliable mapped winner");
         }
 
         String category = winner.getKey();
+        if (!HobbyCategories.isAllowed(category)) {
+            category = guessAllowedCategory(scores);
+        }
         double supportScore = Math.min(1.0, Math.max(bestSingleHit, winner.getValue()));
         if (mappedHits >= 2) {
             supportScore = Math.max(supportScore, 0.65);
@@ -494,6 +520,27 @@ public class ImageUploadController {
     }
 
     // ── Save uploaded file to disk ────────────────────────────────────────────
+    private String guessAllowedCategory(List<LabelScore> scores) {
+        if (scores == null || scores.isEmpty()) return "Instruments";
+        String top = normalizeLabel(scores.get(0).label);
+        if (top.contains("camera") || top.contains("lens") || top.contains("dslr")) {
+            return "Cameras";
+        }
+        return "Instruments";
+    }
+
+    private String saveGalleryFile(MultipartFile photo, Long itemId, int slot) throws IOException {
+        Path uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
+
+        String original  = photo.getOriginalFilename();
+        String extension = (original != null && original.contains("."))
+                ? original.substring(original.lastIndexOf(".")) : ".jpg";
+        String filename  = "item_" + itemId + "_hobby" + slot + "_" + System.currentTimeMillis() + extension;
+        Files.write(uploadPath.resolve(filename), photo.getBytes());
+        return "/uploads/" + filename;
+    }
+
     private String saveFile(MultipartFile photo, Long itemId) throws IOException {
         Path uploadPath = Paths.get(uploadDir);
         if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
