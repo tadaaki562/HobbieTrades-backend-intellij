@@ -1,0 +1,27 @@
+{
+  "outputs": [
+    {
+      "predictions": [
+        {
+          "x": 120.5,
+          "y": 80.2,
+          "width": 200,
+          "height": 150,
+          "class": "electric-guitar",
+          "confidence": 0.91,
+          "class_id": 0
+        }
+      ],
+      "detection_predictions": [
+        {
+          "class": "electric-guitar",
+          "confidence": 0.88
+        }
+      ],
+      "output_image": {
+        "type": "base64",
+        "value": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+      }
+    }
+  ]
+}

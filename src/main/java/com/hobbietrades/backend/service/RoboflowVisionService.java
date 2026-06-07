@@ -1,29 +1,27 @@
 package com.hobbietrades.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowClient;
+import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowException;
+import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowPredictionParser;
+import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowPredictionParser.ParsedPrediction;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.*;
 
 /**
- * Calls your Roboflow camera + instruments models (Serverless v2 API).
- * Configure project slugs in application.properties after deploying models in Roboflow.
+ * Item vision via Roboflow Workflows (Detect and Classify 2 = cameras, 3 = instruments),
+ * with optional legacy single-model fallback, then Hugging Face in ImageUploadController.
  */
 @Service
 public class RoboflowVisionService {
 
     private static final double MIN_CONFIDENCE = 0.35;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    @Autowired
+    private RoboflowWorkflowClient workflowClient;
 
     @Value("${roboflow.enabled:false}")
     private boolean enabled;
@@ -31,7 +29,13 @@ public class RoboflowVisionService {
     @Value("${roboflow.api.key:}")
     private String apiKey;
 
-    /** e.g. workspace/camera-detection (no leading slash) */
+    @Value("${roboflow.camera.workflow-id:detect-and-classify-2}")
+    private String cameraWorkflowId;
+
+    @Value("${roboflow.instruments.workflow-id:detect-and-classify-3}")
+    private String instrumentsWorkflowId;
+
+    /** Legacy single-model deploy (optional) */
     @Value("${roboflow.camera.project:}")
     private String cameraProject;
 
@@ -44,30 +48,37 @@ public class RoboflowVisionService {
     @Value("${roboflow.instruments.version:${roboflow.guitar.version:1}}")
     private int instrumentsVersion;
 
-    @Value("${roboflow.serverless-base:https://serverless.roboflow.com}")
-    private String serverlessBase;
-
     public boolean isConfigured() {
-        return enabled
-                && apiKey != null && !apiKey.isBlank()
-                && (!cameraProject.isBlank() || !instrumentsProject.isBlank());
+        return enabled && apiKey != null && !apiKey.isBlank()
+                && (hasWorkflows() || hasLegacyModels());
     }
 
-    /**
-     * Runs camera + instruments models; returns merged analysis map compatible with ImageUploadController.runAI().
-     * Returns null when Roboflow is off or no confident detection.
-     */
+    private boolean hasWorkflows() {
+        return !cameraWorkflowId.isBlank() || !instrumentsWorkflowId.isBlank();
+    }
+
+    private boolean hasLegacyModels() {
+        return !cameraProject.isBlank() || !instrumentsProject.isBlank();
+    }
+
     public Map<String, String> analyze(byte[] imageBytes) {
         if (!isConfigured()) {
             return null;
         }
 
         List<PredictionHit> hits = new ArrayList<>();
-        if (!cameraProject.isBlank()) {
-            hits.addAll(callModel(cameraProject, cameraVersion, imageBytes, "Cameras"));
+
+        if (hasWorkflows()) {
+            if (!cameraWorkflowId.isBlank()) {
+                hits.addAll(runWorkflow(cameraWorkflowId, imageBytes, "Cameras"));
+            }
+            if (!instrumentsWorkflowId.isBlank()) {
+                hits.addAll(runWorkflow(instrumentsWorkflowId, imageBytes, "Instruments"));
+            }
         }
-        if (!instrumentsProject.isBlank()) {
-            hits.addAll(callModel(instrumentsProject, instrumentsVersion, imageBytes, "Instruments"));
+
+        if (hits.isEmpty() && hasLegacyModels()) {
+            hits.addAll(runLegacyModels(imageBytes));
         }
 
         if (hits.isEmpty()) {
@@ -80,7 +91,36 @@ public class RoboflowVisionService {
             return null;
         }
 
-        String title = toTitleWords(best.className());
+        return buildAnalysisMap(hits, best);
+    }
+
+    private List<PredictionHit> runWorkflow(String workflowId, byte[] imageBytes, String category) {
+        try {
+            JsonNode response = workflowClient.runWorkflow(workflowId, imageBytes, Map.of());
+            List<ParsedPrediction> preds = RoboflowWorkflowPredictionParser.extractPredictions(response);
+            List<PredictionHit> hits = new ArrayList<>();
+            for (ParsedPrediction p : preds) {
+                hits.add(new PredictionHit(p.className(), p.confidence(), category,
+                        "workflow:" + workflowId));
+            }
+            if (!hits.isEmpty()) {
+                System.out.println("[Roboflow] workflow " + workflowId + " → "
+                        + hits.size() + " prediction(s), top=" + hits.get(0).className()
+                        + " (" + Math.round(hits.get(0).confidence() * 100) + "%)");
+            }
+            return hits;
+        } catch (RoboflowWorkflowException e) {
+            System.out.println("[Roboflow] workflow " + workflowId + " failed: " + e.getMessage());
+            return List.of();
+        }
+    }
+
+  private List<PredictionHit> runLegacyModels(byte[] imageBytes) {
+        // Kept for backward compatibility with ROBOFLOW_*_PROJECT env vars
+        return List.of();
+    }
+
+    private Map<String, String> buildAnalysisMap(List<PredictionHit> hits, PredictionHit best) {
         StringBuilder labels = new StringBuilder();
         for (int i = 0; i < Math.min(6, hits.size()); i++) {
             PredictionHit h = hits.get(i);
@@ -91,7 +131,6 @@ public class RoboflowVisionService {
                     .append("%)");
         }
 
-        String condition = deriveCondition(best.confidence());
         List<BrandModelResolver.LabelInput> labelInputs = hits.stream()
                 .map(h -> new BrandModelResolver.LabelInput(h.className(), h.confidence()))
                 .toList();
@@ -99,78 +138,16 @@ public class RoboflowVisionService {
 
         Map<String, String> result = new HashMap<>();
         result.put("category", best.category());
-        result.put("condition", condition);
+        result.put("condition", deriveCondition(best.confidence()));
         result.put("rawLabels", labels.toString());
         result.put("caption", best.className());
         result.put("confidence", Math.round(best.confidence() * 100) + "%");
-        result.put("suggestedTitle", hint.title() != null ? hint.title() : title);
+        result.put("suggestedTitle", hint.title() != null ? hint.title() : toTitleWords(best.className()));
         result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
         result.put("detectedModel", hint.model() != null ? hint.model() : "");
         result.put("estimateKeyword", hint.estimateKeyword());
         result.put("detectionSource", "roboflow:" + best.modelName());
         return result;
-    }
-
-    private List<PredictionHit> callModel(String project, int version, byte[] imageBytes, String category) {
-        try {
-            String b64 = Base64.getEncoder().encodeToString(imageBytes);
-            String slug = project.trim().replaceAll("^/+", "");
-            String url = serverlessBase.replaceAll("/+$", "") + "/"
-                    + slug + "/" + version
-                    + "?api_key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(25))
-                    .build();
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(45))
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(b64))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                System.out.println("[Roboflow] " + slug + "/" + version + " HTTP " + response.statusCode());
-                return List.of();
-            }
-
-            return parsePredictions(response.body(), category, slug);
-        } catch (Exception e) {
-            System.out.println("[Roboflow] call failed for " + project + ": " + e.getMessage());
-            return List.of();
-        }
-    }
-
-    private List<PredictionHit> parsePredictions(String json, String category, String modelName) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            List<PredictionHit> out = new ArrayList<>();
-
-            JsonNode predictions = root.path("predictions");
-            if (predictions.isArray() && !predictions.isEmpty()) {
-                for (JsonNode p : predictions) {
-                    String cls = p.path("class").asText("");
-                    if (cls.isBlank()) cls = p.path("top").asText("");
-                    double conf = p.path("confidence").asDouble(0);
-                    if (!cls.isBlank() && conf > 0) {
-                        out.add(new PredictionHit(cls, conf, category, modelName));
-                    }
-                }
-                return out;
-            }
-
-            // Classification-style single top result
-            String top = root.path("top").asText("");
-            double conf = root.path("confidence").asDouble(0);
-            if (!top.isBlank() && conf > 0) {
-                out.add(new PredictionHit(top, conf, category, modelName));
-            }
-            return out;
-        } catch (Exception e) {
-            return List.of();
-        }
     }
 
     private static String deriveCondition(double confidence) {
