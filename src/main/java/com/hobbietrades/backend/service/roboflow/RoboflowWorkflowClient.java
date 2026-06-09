@@ -15,7 +15,7 @@ import java.util.Base64;
 import java.util.Map;
 
 /**
- * Runs Roboflow Serverless workflows (Detect and Classify 2 / 3).
+ * Runs Roboflow Serverless workflows (detect-and-classify-2 = instruments, 3 = cameras).
  *
  * @see <a href="https://docs.roboflow.com/developer/rest-api/run-a-model-on-an-image">Roboflow Serverless v2</a>
  */

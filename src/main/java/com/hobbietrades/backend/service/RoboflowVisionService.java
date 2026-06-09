@@ -33,14 +33,13 @@ public class RoboflowVisionService {
     @Value("${roboflow.api.key:}")
     private String apiKey;
 
-    @Value("${roboflow.camera.workflow-id:detect-and-classify-2}")
+    @Value("${roboflow.camera.workflow-id:detect-and-classify-3}")
     private String cameraWorkflowId;
 
-    @Value("${roboflow.instruments.workflow-id:detect-and-classify-3}")
+    @Value("${roboflow.instruments.workflow-id:detect-and-classify-2}")
     private String instrumentsWorkflowId;
 
-    /** false = skip broken detect-and-classify-2 workflow; use camera-detection model directly */
-    @Value("${roboflow.camera.use-workflow:false}")
+    @Value("${roboflow.camera.use-workflow:true}")
     private boolean cameraUseWorkflow;
 
     @Value("${roboflow.instruments.use-workflow:true}")

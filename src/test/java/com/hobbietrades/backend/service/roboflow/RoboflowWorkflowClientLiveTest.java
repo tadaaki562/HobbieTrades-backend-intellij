@@ -28,7 +28,7 @@ class RoboflowWorkflowClientLiveTest {
         ReflectionTestUtils.setField(client, "requestTimeoutSeconds", 60);
 
         byte[] imageBytes = minimalPngBytes();
-        JsonNode response = client.runWorkflow("detect-and-classify-3", imageBytes, java.util.Map.of());
+        JsonNode response = client.runWorkflow("detect-and-classify-2", imageBytes, java.util.Map.of());
 
         assertNotNull(response);
         assertTrue(RoboflowWorkflowPredictionParser.hasPredictionOutputs(response),
