@@ -42,6 +42,13 @@ public class RoboflowWorkflowClient {
     private int requestTimeoutSeconds;
 
     /**
+     * When false, Roboflow reloads the latest published workflow instead of a cached definition
+     * (server-side cache TTL is ~15 minutes).
+     */
+    @Value("${roboflow.workflow.use-cache:false}")
+    private boolean useCache;
+
+    /**
      * POST workflow with base64 image input named {@code image} (WorkflowImage).
      */
     public JsonNode runWorkflow(String workflowId, byte[] imageBytes, Map<String, Object> parameters) {
@@ -115,6 +122,7 @@ public class RoboflowWorkflowClient {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("api_key", apiKey);
+            root.put("use_cache", useCache);
 
             ObjectNode inputs = objectMapper.createObjectNode();
             ObjectNode image = objectMapper.createObjectNode();

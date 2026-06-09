@@ -139,8 +139,8 @@ public class RoboflowVisionService {
             String msg = e.getMessage();
             if (msg != null && msg.contains("car-colors")) {
                 System.out.println("[Roboflow] workflow " + workflowId
-                        + " failed: classification step uses wrong model (car-colors). "
-                        + "Fix workflow in Roboflow or use detection model fallback.");
+                        + " failed: stale graph still references car-colors. "
+                        + "Publish the latest workflow in Roboflow (drafts are not live).");
             } else {
                 System.out.println("[Roboflow] workflow " + workflowId + " failed: " + msg);
             }
