@@ -18,13 +18,24 @@ public final class BrandModelResolver {
             "leica", "sigma", "tamron", "pentax"
     ));
 
-    /** Guitar / instrument types — chosen by highest label score, not list order. */
+    /** Labels that are not the trade item itself (common in photos with people holding gear). */
+    private static final Set<String> NON_ITEM_LABELS = Set.of(
+            "person", "people", "human", "man", "woman", "boy", "girl", "child",
+            "face", "hand", "finger", "thumb", "arm", "leg", "hair", "head",
+            "shirt", "pants", "shoe", "shoes", "jacket", "hat",
+            "crowd", "audience", "stage", "building", "sky", "grass", "tree", "plant",
+            "furniture", "table", "chair", "couch", "wall", "floor", "window", "door",
+            "background", "outdoor", "indoor", "room", "street", "road"
+    );
+
+    /** Longest phrases first so "electric guitar" wins over "guitar" on the same label. */
     private static final List<String> ITEM_TYPE_PHRASES = List.of(
             "electric guitar", "acoustic guitar", "bass guitar", "classical guitar",
-            "grand piano", "upright piano", "digital piano", "drum kit", "violin", "cello",
-            "saxophone", "trumpet", "flute", "ukulele",
+            "grand piano", "upright piano", "digital piano", "drum kit",
             "mirrorless camera", "dslr camera", "digital camera", "action camera",
-            "film camera", "instant camera", "camera lens", "camera"
+            "film camera", "instant camera", "camera lens",
+            "guitar", "bass", "drums", "piano", "keyboard", "violin", "cello",
+            "saxophone", "trumpet", "flute", "ukulele", "microphone", "camera"
     );
 
     private static final List<String> MODEL_PHRASES = List.of(
@@ -49,9 +60,14 @@ public final class BrandModelResolver {
             return fallback(category, null);
         }
 
-        String brandKey = findBestBrand(scores);
-        String itemType = findBestPhrase(scores, ITEM_TYPE_PHRASES);
-        String modelKey = findBestPhrase(scores, MODEL_PHRASES);
+        List<LabelInput> itemScores = filterItemLabels(scores);
+
+        String brandKey = findBestBrand(itemScores);
+        String itemType = findBestPhrase(itemScores, ITEM_TYPE_PHRASES);
+        if (itemType == null) {
+            itemType = findBestRawItemLabel(itemScores);
+        }
+        String modelKey = findBestPhrase(itemScores, MODEL_PHRASES);
 
         // Model phrase must not contradict the winning item type (e.g. skip "acoustic" model when type is electric)
         if (itemType != null && modelKey != null && contradicts(itemType, modelKey)) {
@@ -68,6 +84,52 @@ public final class BrandModelResolver {
         return new Hint(brandDisplay, modelDisplay, title, estimateKeyword);
     }
 
+    /** True when the label names a person/scene, not the hobby item (Roboflow / ViT). */
+    public static boolean isNonItemLabel(String rawLabel) {
+        if (rawLabel == null || rawLabel.isBlank()) return true;
+        String norm = normalize(rawLabel);
+        if (norm.isBlank()) return true;
+        if (NON_ITEM_LABELS.contains(norm)) return true;
+        for (String token : norm.split("\\s+")) {
+            if (NON_ITEM_LABELS.contains(token)) return true;
+        }
+        return false;
+    }
+
+    public static boolean isGenericCategoryTitle(String title, String category) {
+        if (title == null || title.isBlank()) return true;
+        if ("Hobby item".equalsIgnoreCase(title.trim())) return true;
+        if (category == null || category.isBlank() || "Other".equals(category)) return false;
+        return title.equalsIgnoreCase(category + " Item")
+                || title.equalsIgnoreCase(category + " item");
+    }
+
+    private static List<LabelInput> filterItemLabels(List<LabelInput> scores) {
+        if (scores == null || scores.isEmpty()) return List.of();
+        List<LabelInput> filtered = new ArrayList<>();
+        for (LabelInput li : scores) {
+            if (!isNonItemLabel(li.label())) {
+                filtered.add(li);
+            }
+        }
+        return filtered.isEmpty() ? scores : filtered;
+    }
+
+    /** Best remaining label after phrase matching fails (e.g. Roboflow class {@code electric-guitar}). */
+    private static String findBestRawItemLabel(List<LabelInput> scores) {
+        String best = null;
+        double bestScore = -1;
+        for (LabelInput li : scores) {
+            String norm = normalize(li.label());
+            if (norm.isBlank() || isNonItemLabel(li.label())) continue;
+            if (li.score() > bestScore) {
+                bestScore = li.score();
+                best = norm;
+            }
+        }
+        return best;
+    }
+
     private static boolean contradicts(String itemType, String modelKey) {
         if (itemType.contains("electric") && modelKey.contains("acoustic")) return true;
         if (itemType.contains("acoustic") && modelKey.contains("electric")) return true;
@@ -78,10 +140,11 @@ public final class BrandModelResolver {
         String best = null;
         double bestScore = 0;
         for (LabelInput li : scores) {
-            String norm = " " + normalize(li.label) + " ";
+            if (isNonItemLabel(li.label())) continue;
+            String norm = " " + normalize(li.label()) + " ";
             for (String b : BRANDS) {
-                if (containsToken(norm, b) && li.score > bestScore) {
-                    bestScore = li.score;
+                if (containsToken(norm, b) && li.score() > bestScore) {
+                    bestScore = li.score();
                     best = b;
                 }
             }
@@ -96,10 +159,13 @@ public final class BrandModelResolver {
         String bestPhrase = null;
         double bestScore = -1;
         for (LabelInput li : scores) {
-            String norm = normalize(li.label);
+            String norm = normalize(li.label());
+            if (isNonItemLabel(li.label())) continue;
             for (String phrase : phrases) {
-                if (labelContainsPhrase(norm, phrase) && li.score > bestScore) {
-                    bestScore = li.score;
+                if (!labelMatchesItemType(norm, phrase)) continue;
+                if (li.score() > bestScore
+                        || (li.score() == bestScore && phrase.length() > (bestPhrase != null ? bestPhrase.length() : 0))) {
+                    bestScore = li.score();
                     bestPhrase = phrase;
                 }
             }
@@ -112,6 +178,12 @@ public final class BrandModelResolver {
                 || normalizedLabel.startsWith(phrase + " ")
                 || normalizedLabel.endsWith(" " + phrase)
                 || normalizedLabel.contains(" " + phrase + " ");
+    }
+
+    private static boolean labelMatchesItemType(String normalizedLabel, String phrase) {
+        if (labelContainsPhrase(normalizedLabel, phrase)) return true;
+        if (normalizedLabel.equals(phrase)) return true;
+        return phrase.endsWith(" " + normalizedLabel);
     }
 
     private static String composeTitle(String brand, String specificModel, String itemType, String category) {

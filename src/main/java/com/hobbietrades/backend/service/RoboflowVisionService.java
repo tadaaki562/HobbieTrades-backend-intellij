@@ -182,20 +182,27 @@ public class RoboflowVisionService {
                     .append("%)");
         }
 
+        PredictionHit titleHit = bestItemHit(hits, best);
         List<BrandModelResolver.LabelInput> labelInputs = hits.stream()
+                .filter(h -> !BrandModelResolver.isNonItemLabel(h.className()))
                 .map(h -> new BrandModelResolver.LabelInput(h.className(), h.confidence()))
                 .toList();
         BrandModelResolver.Hint hint = BrandModelResolver.resolve(labelInputs, best.category());
+
+        String suggestedTitle = hint.title();
+        if (BrandModelResolver.isGenericCategoryTitle(suggestedTitle, best.category())) {
+            suggestedTitle = toTitleWords(titleHit.className());
+        }
 
         Map<String, String> result = new HashMap<>();
         result.put("category", best.category());
         result.put("condition", deriveCondition(best.confidence()));
         result.put("rawLabels", labels.toString());
-        result.put("caption", best.className());
+        result.put("caption", titleHit.className());
         result.put("confidence", Math.round(best.confidence() * 100) + "%");
-        result.put("suggestedTitle", hint.title() != null ? hint.title() : toTitleWords(best.className()));
+        result.put("suggestedTitle", suggestedTitle);
         result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
-        result.put("detectedModel", hint.model() != null ? hint.model() : "");
+        result.put("detectedModel", hint.model() != null ? hint.model() : toTitleWords(titleHit.className()));
         result.put("estimateKeyword", hint.estimateKeyword());
         result.put("detectionSource", "roboflow:" + best.modelName());
         return result;
@@ -206,6 +213,15 @@ public class RoboflowVisionService {
         if (confidence > 0.65) return "Good";
         if (confidence > 0.45) return "Fair";
         return "Worn";
+    }
+
+    private static PredictionHit bestItemHit(List<PredictionHit> hits, PredictionHit fallback) {
+        for (PredictionHit hit : hits) {
+            if (!BrandModelResolver.isNonItemLabel(hit.className())) {
+                return hit;
+            }
+        }
+        return fallback;
     }
 
     private static String toTitleWords(String raw) {

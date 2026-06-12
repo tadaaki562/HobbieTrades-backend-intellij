@@ -332,7 +332,19 @@ public class ImageUploadController {
         result.put("caption",    topLabel);
         result.put("confidence", confidencePct + "%");
         BrandModelResolver.Hint hint = resolveBrandModel(scores, category);
-        result.put("suggestedTitle", hint.title());
+        String suggestedTitle = hint.title();
+        if (BrandModelResolver.isGenericCategoryTitle(suggestedTitle, category)) {
+            for (LabelScore ls : scores) {
+                if (!BrandModelResolver.isNonItemLabel(ls.label)) {
+                    String segment = firstLabelSegment(ls.label);
+                    if (segment != null && !segment.isBlank()) {
+                        suggestedTitle = toTitleWords(normalizeLabelForTitle(segment));
+                        break;
+                    }
+                }
+            }
+        }
+        result.put("suggestedTitle", suggestedTitle);
         result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
         result.put("detectedModel", hint.model() != null ? hint.model() : "");
         result.put("estimateKeyword", hint.estimateKeyword());
@@ -351,6 +363,11 @@ public class ImageUploadController {
     private String firstLabelSegment(String rawLabel) {
         if (rawLabel == null || rawLabel.isBlank()) return null;
         return rawLabel.split(",")[0].trim();
+    }
+
+    private String normalizeLabelForTitle(String raw) {
+        if (raw == null) return "";
+        return raw.toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ').trim();
     }
 
     private String titleFallbackForCategory(String category) {
