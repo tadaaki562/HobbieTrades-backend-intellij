@@ -17,7 +17,6 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/items")
-@CrossOrigin(origins = "*")
 public class ItemController {
 
     @Autowired
@@ -161,14 +160,16 @@ public class ItemController {
 
         Item item = itemOpt.get();
 
-        // Ownership check if userId provided
-        if (body != null && body.get("userId") != null) {
-            Long requestingUserId = Long.parseLong(body.get("userId").toString());
-            if (!item.getUser().getId().equals(requestingUserId)) {
-                response.put("success", false);
-                response.put("message", "You can only delete your own listings.");
-                return ResponseEntity.status(403).body(response);
-            }
+        if (body == null || body.get("userId") == null) {
+            response.put("success", false);
+            response.put("message", "userId is required to delete a listing.");
+            return ResponseEntity.badRequest().body(response);
+        }
+        Long requestingUserId = Long.parseLong(body.get("userId").toString());
+        if (!item.getUser().getId().equals(requestingUserId)) {
+            response.put("success", false);
+            response.put("message", "You can only delete your own listings.");
+            return ResponseEntity.status(403).body(response);
         }
 
         item.setIsAvailable(false);

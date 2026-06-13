@@ -19,7 +19,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/users")
-@CrossOrigin(origins = "*")
 public class UserController {
 
     @Autowired private UserRepository userRepository;
@@ -47,7 +46,6 @@ public class UserController {
         Map<String, Object> userMap = new LinkedHashMap<>();
         userMap.put("id",         user.getId());
         userMap.put("name",       user.getName());
-        userMap.put("email",      user.getEmail());
         userMap.put("location",   user.getLocation());
         userMap.put("rating",     user.getRating());
         userMap.put("tradeCount", user.getTradeCount());

@@ -7,6 +7,7 @@ import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.service.BrandModelResolver;
 import com.hobbietrades.backend.service.RoboflowVisionService;
 import com.hobbietrades.backend.util.HobbyCategories;
+import com.hobbietrades.backend.util.UploadValidator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +24,6 @@ import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/items")
-@CrossOrigin(origins = "*")
 public class ImageUploadController {
 
     @Autowired
@@ -102,6 +102,7 @@ public class ImageUploadController {
 
         Map<String, Object> result = new HashMap<>();
         try {
+            UploadValidator.validateImage(photo);
             Map<String, String> ai = runAI(photo.getBytes());
 
             result.put("success",           true);
@@ -117,6 +118,10 @@ public class ImageUploadController {
             result.put("detectionSource",   ai.getOrDefault("detectionSource", "huggingface"));
             return ResponseEntity.ok(result);
 
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
         } catch (Exception e) {
             result.put("success", false);
             result.put("message", "Analysis failed: " + e.getMessage());
@@ -143,10 +148,14 @@ public class ImageUploadController {
         }
         Item item = itemOpt.get();
 
-        // Save file to disk
         String photoUrl;
         try {
+            UploadValidator.validateImage(photo);
             photoUrl = saveFile(photo, id);
+        } catch (IllegalArgumentException e) {
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
         } catch (IOException e) {
             response.put("success", false);
             response.put("message", "File save failed: " + e.getMessage());
@@ -235,6 +244,10 @@ public class ImageUploadController {
             response.put("galleryUrls", urls);
             response.put("message", "Hobby authentication photos saved.");
             return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
         } catch (IOException e) {
             response.put("success", false);
             response.put("message", "Gallery save failed: " + e.getMessage());
@@ -257,8 +270,7 @@ public class ImageUploadController {
             System.out.println("[AI] Roboflow returned no confident match — falling back to Hugging Face ViT");
         }
 
-        System.out.println("[AI] Starting Hugging Face analysis, key prefix: "
-                + (hfApiKey != null && hfApiKey.length() >= 8 ? hfApiKey.substring(0, 8) : "?") + "...");
+        System.out.println("[AI] Starting Hugging Face analysis (ViT fallback)");
 
         Map<String, String> result = new HashMap<>();
         result.put("category",   "Other");
@@ -566,24 +578,22 @@ public class ImageUploadController {
     }
 
     private String saveGalleryFile(MultipartFile photo, Long itemId, int slot) throws IOException {
+        UploadValidator.validateImage(photo);
         Path uploadPath = Paths.get(uploadDir);
         if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
 
-        String original  = photo.getOriginalFilename();
-        String extension = (original != null && original.contains("."))
-                ? original.substring(original.lastIndexOf(".")) : ".jpg";
+        String extension = UploadValidator.safeExtension(photo);
         String filename  = "item_" + itemId + "_hobby" + slot + "_" + System.currentTimeMillis() + extension;
         Files.write(uploadPath.resolve(filename), photo.getBytes());
         return "/uploads/" + filename;
     }
 
     private String saveFile(MultipartFile photo, Long itemId) throws IOException {
+        UploadValidator.validateImage(photo);
         Path uploadPath = Paths.get(uploadDir);
         if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
 
-        String original  = photo.getOriginalFilename();
-        String extension = (original != null && original.contains("."))
-                ? original.substring(original.lastIndexOf(".")) : ".jpg";
+        String extension = UploadValidator.safeExtension(photo);
         String filename  = "item_" + itemId + "_" + System.currentTimeMillis() + extension;
         Files.write(uploadPath.resolve(filename), photo.getBytes());
         return "/uploads/" + filename;

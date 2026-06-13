@@ -13,7 +13,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/trades")
-@CrossOrigin(origins = "*")
 public class TradeController {
 
     @Autowired private TradeRepository tradeRepository;
@@ -47,11 +46,37 @@ public class TradeController {
             return ResponseEntity.badRequest().body(response);
         }
 
+        if (proposerId.equals(receiverId)) {
+            response.put("success", false);
+            response.put("message", "You cannot trade with yourself.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        Item offered = offeredItem.get();
+        Item requested = requestedItem.get();
+
+        if (!offered.getUser().getId().equals(proposerId)) {
+            response.put("success", false);
+            response.put("message", "The offered item must belong to you.");
+            return ResponseEntity.status(403).body(response);
+        }
+        if (!requested.getUser().getId().equals(receiverId)) {
+            response.put("success", false);
+            response.put("message", "The requested item must belong to the other trader.");
+            return ResponseEntity.badRequest().body(response);
+        }
+        if (!Boolean.TRUE.equals(offered.getIsAvailable())
+                || !Boolean.TRUE.equals(requested.getIsAvailable())) {
+            response.put("success", false);
+            response.put("message", "One or both items are no longer available.");
+            return ResponseEntity.badRequest().body(response);
+        }
+
         Trade trade = new Trade();
         trade.setProposer(proposer.get());
         trade.setReceiver(receiver.get());
-        trade.setOfferedItem(offeredItem.get());
-        trade.setRequestedItem(requestedItem.get());
+        trade.setOfferedItem(offered);
+        trade.setRequestedItem(requested);
         trade.setStatus("pending");
         tradeRepository.save(trade);
 
@@ -69,9 +94,11 @@ public class TradeController {
         );
     }
 
-    // PUT /api/trades/{id}/accept
+    // PUT /api/trades/{id}/accept — only the receiver can accept a pending trade
     @PutMapping("/{id}/accept")
-    public ResponseEntity<Map<String, Object>> acceptTrade(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> acceptTrade(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
         Map<String, Object> response = new HashMap<>();
         Optional<Trade> tradeOpt = tradeRepository.findById(id);
         if (tradeOpt.isEmpty()) {
@@ -79,7 +106,23 @@ public class TradeController {
             response.put("message", "Trade not found.");
             return ResponseEntity.badRequest().body(response);
         }
+        if (body == null || body.get("userId") == null) {
+            response.put("success", false);
+            response.put("message", "userId is required.");
+            return ResponseEntity.badRequest().body(response);
+        }
+        Long userId = Long.parseLong(body.get("userId").toString());
         Trade trade = tradeOpt.get();
+        if (!trade.getReceiver().getId().equals(userId)) {
+            response.put("success", false);
+            response.put("message", "Only the person receiving this proposal can accept it.");
+            return ResponseEntity.status(403).body(response);
+        }
+        if (!"pending".equals(trade.getStatus())) {
+            response.put("success", false);
+            response.put("message", "This trade is no longer pending.");
+            return ResponseEntity.badRequest().body(response);
+        }
         trade.setStatus("accepted");
         tradeRepository.save(trade);
         createStatusMessage(trade,
@@ -108,9 +151,17 @@ public class TradeController {
         Trade trade = tradeOpt.get();
         Long userId = Long.parseLong(body.get("userId").toString());
 
-        if (trade.getProposer().getId().equals(userId)) {
+        boolean isProposer = trade.getProposer().getId().equals(userId);
+        boolean isReceiver = trade.getReceiver().getId().equals(userId);
+        if (!isProposer && !isReceiver) {
+            response.put("success", false);
+            response.put("message", "You are not part of this trade.");
+            return ResponseEntity.status(403).body(response);
+        }
+
+        if (isProposer) {
             trade.setProposerConfirmed(true);
-        } else if (trade.getReceiver().getId().equals(userId)) {
+        } else {
             trade.setReceiverConfirmed(true);
         }
 
@@ -191,9 +242,11 @@ public class TradeController {
         return ResponseEntity.ok(response);
     }
 
-    // PUT /api/trades/{id}/decline
+    // PUT /api/trades/{id}/decline — receiver or proposer can decline while pending
     @PutMapping("/{id}/decline")
-    public ResponseEntity<Map<String, Object>> declineTrade(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> declineTrade(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
         Map<String, Object> response = new HashMap<>();
         Optional<Trade> tradeOpt = tradeRepository.findById(id);
         if (tradeOpt.isEmpty()) {
@@ -201,7 +254,25 @@ public class TradeController {
             response.put("message", "Trade not found.");
             return ResponseEntity.badRequest().body(response);
         }
+        if (body == null || body.get("userId") == null) {
+            response.put("success", false);
+            response.put("message", "userId is required.");
+            return ResponseEntity.badRequest().body(response);
+        }
+        Long userId = Long.parseLong(body.get("userId").toString());
         Trade trade = tradeOpt.get();
+        boolean participant = trade.getProposer().getId().equals(userId)
+                || trade.getReceiver().getId().equals(userId);
+        if (!participant) {
+            response.put("success", false);
+            response.put("message", "You are not part of this trade.");
+            return ResponseEntity.status(403).body(response);
+        }
+        if (!"pending".equals(trade.getStatus())) {
+            response.put("success", false);
+            response.put("message", "This trade is no longer pending.");
+            return ResponseEntity.badRequest().body(response);
+        }
         trade.setStatus("declined");
         tradeRepository.save(trade);
         response.put("success", true);

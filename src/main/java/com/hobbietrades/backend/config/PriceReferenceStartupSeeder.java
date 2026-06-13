@@ -61,12 +61,11 @@ public class PriceReferenceStartupSeeder implements ApplicationRunner {
                 new Row("dslr camera", "Cameras", "Good", 32000),
                 new Row("mirrorless camera", "Cameras", "Good", 38500),
                 new Row("gopro", "Cameras", "Good", 14500),
-                new Row("nintendo switch", "Gaming", "Good", 11800),
-                new Row("ps5", "Gaming", "Good", 24800),
-                new Row("mountain bike", "Sports", "Good", 12500),
-                new Row("skateboard", "Sports", "Good", 3200),
-                new Row("acrylic paint", "Art", "Good", 2500),
-                new Row("sewing machine", "Craft", "Good", 8500)
+                new Row("canon lens", "Cameras", "Good", 22000),
+                new Row("acoustic guitar", "Instruments", "Good", 7800),
+                new Row("bass guitar", "Instruments", "Good", 11200),
+                new Row("violin", "Instruments", "Good", 6500),
+                new Row("drum kit", "Instruments", "Good", 15800)
         );
         for (Row r : rows) {
             PriceReference ref = new PriceReference();
