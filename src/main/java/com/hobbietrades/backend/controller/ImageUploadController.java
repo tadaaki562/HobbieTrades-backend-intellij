@@ -3,8 +3,13 @@ package com.hobbietrades.backend.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hobbietrades.backend.model.Item;
+import com.hobbietrades.backend.model.ItemGalleryImage;
+import com.hobbietrades.backend.repository.ItemGalleryImageRepository;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.service.BrandModelResolver;
+import com.hobbietrades.backend.service.ItemPhotoValidationService;
+import com.hobbietrades.backend.service.ItemPhotoValidationService.ValidationResult;
+import com.hobbietrades.backend.service.ItemValidationException;
 import com.hobbietrades.backend.service.RoboflowVisionService;
 import com.hobbietrades.backend.util.HobbyCategories;
 import com.hobbietrades.backend.util.UploadValidator;
@@ -31,6 +36,12 @@ public class ImageUploadController {
 
     @Autowired
     private RoboflowVisionService roboflowVisionService;
+
+    @Autowired
+    private ItemPhotoValidationService photoValidationService;
+
+    @Autowired
+    private ItemGalleryImageRepository galleryRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -103,9 +114,12 @@ public class ImageUploadController {
         Map<String, Object> result = new HashMap<>();
         try {
             UploadValidator.validateImage(photo);
-            Map<String, String> ai = runAI(photo.getBytes());
+            ValidationResult validation = photoValidationService.validate(
+                    photo.getBytes(), this::runHuggingFaceOnly);
+            Map<String, String> ai = validation.analysis();
 
             result.put("success",           true);
+            result.put("accepted",          true);
             result.put("detectedCategory",  ai.get("category"));
             result.put("detectedCondition", ai.get("condition"));
             result.put("rawLabels",         ai.get("rawLabels"));
@@ -116,15 +130,55 @@ public class ImageUploadController {
             result.put("detectedModel",     ai.get("detectedModel"));
             result.put("estimateKeyword",   ai.get("estimateKeyword"));
             result.put("detectionSource",   ai.getOrDefault("detectionSource", "huggingface"));
+            result.put("message",           "Photo accepted — " + ai.get("category") + " detected.");
             return ResponseEntity.ok(result);
 
+        } catch (ItemValidationException e) {
+            result.put("success", false);
+            result.put("accepted", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
         } catch (IllegalArgumentException e) {
             result.put("success", false);
+            result.put("accepted", false);
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
         } catch (Exception e) {
             result.put("success", false);
+            result.put("accepted", false);
             result.put("message", "Analysis failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(result);
+        }
+    }
+
+    /** Validates a hobby proof photo (must show a camera or instrument). */
+    @PostMapping("/validate-photo")
+    public ResponseEntity<Map<String, Object>> validatePhoto(
+            @RequestParam("photo") MultipartFile photo,
+            @RequestParam(value = "slot", required = false) Integer slot) {
+
+        Map<String, Object> result = new HashMap<>();
+        try {
+            UploadValidator.validateImage(photo);
+            ValidationResult validation = photoValidationService.validate(
+                    photo.getBytes(), this::runHuggingFaceOnly);
+            result.put("success", true);
+            result.put("accepted", true);
+            result.put("slot", slot);
+            result.put("detectedCategory", validation.category());
+            result.put("confidence", validation.confidence());
+            result.put("message", "Hobby photo accepted — " + validation.category() + " detected.");
+            return ResponseEntity.ok(result);
+        } catch (ItemValidationException | IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("accepted", false);
+            result.put("slot", slot);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("accepted", false);
+            result.put("message", "Validation failed: " + e.getMessage());
             return ResponseEntity.status(500).body(result);
         }
     }
@@ -148,25 +202,36 @@ public class ImageUploadController {
         }
         Item item = itemOpt.get();
 
-        String photoUrl;
+        byte[] imageBytes;
         try {
             UploadValidator.validateImage(photo);
-            photoUrl = saveFile(photo, id);
-        } catch (IllegalArgumentException e) {
+            imageBytes = photo.getBytes();
+            photoValidationService.validate(imageBytes, this::runHuggingFaceOnly);
+        } catch (ItemValidationException | IllegalArgumentException e) {
             response.put("success", false);
             response.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(response);
         } catch (IOException e) {
             response.put("success", false);
-            response.put("message", "File save failed: " + e.getMessage());
+            response.put("message", "Could not read photo: " + e.getMessage());
             return ResponseEntity.status(500).body(response);
         }
 
+        String photoUrl = "/api/items/" + id + "/photo";
+        String mime = photo.getContentType() != null ? photo.getContentType() : "image/jpeg";
+
+        try {
+            saveFile(photo, id);
+        } catch (IOException e) {
+            System.out.println("[Upload] disk backup failed (non-fatal): " + e.getMessage());
+        }
+
+        item.setPhotoData(imageBytes);
+        item.setPhotoMime(mime);
         item.setPhotoUrl(photoUrl);
 
-        // Run AI and update blank fields
         try {
-            Map<String, String> ai = runAI(photo.getBytes());
+            Map<String, String> ai = runAI(imageBytes);
             boolean catUpdated  = false;
             boolean condUpdated = false;
 
@@ -228,15 +293,30 @@ public class ImageUploadController {
         }
 
         Item item = itemOpt.get();
+        galleryRepository.deleteByItemId(id);
+
         List<String> urls = new ArrayList<>();
         try {
             for (int i = 0; i < photos.length; i++) {
-                if (photos[i] == null || photos[i].isEmpty()) {
+                MultipartFile file = photos[i];
+                if (file == null || file.isEmpty()) {
                     response.put("success", false);
                     response.put("message", "Hobby photo " + (i + 1) + " is missing.");
                     return ResponseEntity.badRequest().body(response);
                 }
-                urls.add(saveGalleryFile(photos[i], id, i + 1));
+                UploadValidator.validateImage(file);
+                byte[] bytes = file.getBytes();
+                photoValidationService.validate(bytes, this::runHuggingFaceOnly);
+
+                int slot = i + 1;
+                ItemGalleryImage galleryImage = new ItemGalleryImage();
+                galleryImage.setItemId(id);
+                galleryImage.setSlot(slot);
+                galleryImage.setImageData(bytes);
+                galleryImage.setMimeType(file.getContentType() != null ? file.getContentType() : "image/jpeg");
+                galleryRepository.save(galleryImage);
+
+                urls.add("/api/items/" + id + "/gallery/" + slot);
             }
             item.setGalleryUrls(String.join("|", urls));
             itemRepository.save(item);
@@ -244,7 +324,13 @@ public class ImageUploadController {
             response.put("galleryUrls", urls);
             response.put("message", "Hobby authentication photos saved.");
             return ResponseEntity.ok(response);
+        } catch (ItemValidationException e) {
+            galleryRepository.deleteByItemId(id);
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
         } catch (IllegalArgumentException e) {
+            galleryRepository.deleteByItemId(id);
             response.put("success", false);
             response.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(response);
@@ -253,6 +339,62 @@ public class ImageUploadController {
             response.put("message", "Gallery save failed: " + e.getMessage());
             return ResponseEntity.status(500).body(response);
         }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Hugging Face only — used when Roboflow unavailable (strict category mapping)
+    // ════════════════════════════════════════════════════════════════════════
+    Map<String, String> runHuggingFaceOnly(byte[] imageBytes) throws Exception {
+        Map<String, String> result = new HashMap<>();
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+
+        List<LabelScore> scores = callVitWithRetry(client, imageBytes,
+                "https://router.huggingface.co/hf-inference/models/google/vit-base-patch16-224",
+                "ViT-base");
+
+        if (scores.isEmpty() || scores.get(0).score < 0.50) {
+            List<LabelScore> largeScores = callVitWithRetry(client, imageBytes,
+                    "https://router.huggingface.co/hf-inference/models/google/vit-large-patch16-224",
+                    "ViT-large");
+            if (!largeScores.isEmpty() &&
+                    (scores.isEmpty() || largeScores.get(0).score > scores.get(0).score)) {
+                scores = largeScores;
+            }
+        }
+
+        if (scores.isEmpty()) {
+            return null;
+        }
+
+        CategoryPick categoryPick = pickCategoryFromLabels(scores, true);
+        if (!HobbyCategories.isAllowed(categoryPick.category) || categoryPick.supportScore < 0.35) {
+            return null;
+        }
+
+        StringBuilder labelsBuilder = new StringBuilder();
+        for (int i = 0; i < Math.min(6, scores.size()); i++) {
+            if (i > 0) labelsBuilder.append(", ");
+            labelsBuilder.append(scores.get(i).label)
+                    .append(" (")
+                    .append(Math.round(scores.get(i).score * 100))
+                    .append("%)");
+        }
+
+        int confidencePct = (int) Math.round(categoryPick.supportScore * 100);
+        result.put("category", categoryPick.category);
+        result.put("condition", deriveCondition(categoryPick.supportScore));
+        result.put("rawLabels", labelsBuilder.toString());
+        result.put("caption", scores.get(0).label);
+        result.put("confidence", confidencePct + "%");
+        BrandModelResolver.Hint hint = resolveBrandModel(scores, categoryPick.category);
+        result.put("suggestedTitle", hint.title());
+        result.put("detectedBrand", hint.brand() != null ? hint.brand() : "");
+        result.put("detectedModel", hint.model() != null ? hint.model() : "");
+        result.put("estimateKeyword", hint.estimateKeyword());
+        result.put("detectionSource", "huggingface");
+        return result;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -317,7 +459,7 @@ public class ImageUploadController {
 
         // Step 3: robust category mapping from top labels
         String topLabel = scores.get(0).label;
-        CategoryPick categoryPick = pickCategoryFromLabels(scores);
+        CategoryPick categoryPick = pickCategoryFromLabels(scores, false);
         String category = categoryPick.category;
 
         // Step 4: derive condition from confidence + label coherence
@@ -483,11 +625,19 @@ public class ImageUploadController {
         if (lower.contains("camera") || lower.contains("lens") || lower.contains("dslr")) {
             return "Cameras";
         }
-        return "Instruments";
+        if (lower.contains("guitar") || lower.contains("piano") || lower.contains("violin")
+                || lower.contains("drum") || lower.contains("saxophone") || lower.contains("ukulele")
+                || lower.contains("trumpet") || lower.contains("flute") || lower.contains("bass")) {
+            return "Instruments";
+        }
+        return null;
     }
 
-    private CategoryPick pickCategoryFromLabels(List<LabelScore> scores) {
+    private CategoryPick pickCategoryFromLabels(List<LabelScore> scores, boolean strict) {
         if (scores == null || scores.isEmpty()) {
+            if (strict) {
+                return new CategoryPick(null, 0.0, "No labels");
+            }
             return new CategoryPick("Instruments", 0.0, "No labels — default Instruments");
         }
 
@@ -498,7 +648,7 @@ public class ImageUploadController {
             for (String token : DIRECT_PRIORITY_KEYWORDS) {
                 if (!normalized.contains(token)) continue;
                 String mapped = mapSingleLabel(normalized);
-                if (HobbyCategories.isAllowed(mapped)) {
+                if (mapped != null && HobbyCategories.isAllowed(mapped)) {
                     return new CategoryPick(
                             mapped,
                             Math.max(scores.get(i).score, 0.72),
@@ -533,6 +683,9 @@ public class ImageUploadController {
         }
 
         if (bucket.isEmpty()) {
+            if (strict) {
+                return new CategoryPick(null, scores.get(0).score, "No mapped camera/instrument labels");
+            }
             return new CategoryPick(guessAllowedCategory(scores), scores.get(0).score, "No mapped labels — guessed from top label");
         }
 

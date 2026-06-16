@@ -35,6 +35,15 @@ public class Item {
     @Column(name = "photo_url")
     private String photoUrl;
 
+    @Lob
+    @Column(name = "photo_data")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private byte[] photoData;
+
+    @Column(name = "photo_mime", length = 64)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String photoMime;
+
     /** Pipe-separated URLs for hobby authentication photos (slots 2–5). */
     @Column(name = "gallery_urls", columnDefinition = "TEXT")
     private String galleryUrls;
@@ -80,6 +89,12 @@ public class Item {
 
     public String getPhotoUrl() { return photoUrl; }
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
+    public byte[] getPhotoData() { return photoData; }
+    public void setPhotoData(byte[] photoData) { this.photoData = photoData; }
+
+    public String getPhotoMime() { return photoMime; }
+    public void setPhotoMime(String photoMime) { this.photoMime = photoMime; }
 
     public String getGalleryUrls() { return galleryUrls; }
     public void setGalleryUrls(String galleryUrls) { this.galleryUrls = galleryUrls; }
