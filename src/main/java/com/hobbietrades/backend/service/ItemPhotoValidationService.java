@@ -47,7 +47,13 @@ public class ItemPhotoValidationService {
                     "Could not verify this photo. Only cameras and musical instruments are allowed.");
         }
 
-        Map<String, String> hf = hfAnalyzer.analyzeWithHuggingFace(imageBytes);
+        Map<String, String> hf;
+        try {
+            hf = hfAnalyzer.analyzeWithHuggingFace(imageBytes);
+        } catch (Exception e) {
+            throw new ItemValidationException(
+                    "Could not analyze this photo. Only cameras and musical instruments are allowed.");
+        }
         if (hf == null || hf.isEmpty()) {
             throw new ItemValidationException(
                     "Could not analyze this photo. Only cameras and musical instruments are allowed.");
