@@ -53,6 +53,14 @@ public class ItemImageController {
         if (img.isPresent()) {
             return bytesResponse(img.get().getImageData(), img.get().getMimeType());
         }
+
+        Optional<Item> itemOpt = itemRepository.findById(id);
+        if (itemOpt.isPresent() && itemOpt.get().getGalleryUrls() != null) {
+            String[] parts = itemOpt.get().getGalleryUrls().split("\\|");
+            if (slot >= 1 && slot <= parts.length) {
+                return loadLegacyFile(parts[slot - 1].trim());
+            }
+        }
         return ResponseEntity.notFound().build();
     }
 

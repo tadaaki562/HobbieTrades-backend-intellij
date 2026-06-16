@@ -2,6 +2,7 @@ package com.hobbietrades.backend.controller;
 
 import com.hobbietrades.backend.model.Item;
 import com.hobbietrades.backend.model.User;
+import com.hobbietrades.backend.repository.ItemGalleryImageRepository;
 import com.hobbietrades.backend.repository.ItemRepository;
 import com.hobbietrades.backend.repository.UserRepository;
 import com.hobbietrades.backend.util.HobbyCategories;
@@ -24,6 +25,9 @@ public class ItemController {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private ItemGalleryImageRepository galleryRepository;
 
     // GET /api/items — get all available items
     @GetMapping
@@ -173,6 +177,9 @@ public class ItemController {
         }
 
         item.setIsAvailable(false);
+        item.setPhotoData(null);
+        item.setPhotoMime(null);
+        galleryRepository.deleteByItemId(id);
         itemRepository.save(item);
         response.put("success", true);
         response.put("message", "Item removed.");
