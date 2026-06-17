@@ -11,6 +11,7 @@ import com.hobbietrades.backend.service.ItemPhotoValidationService;
 import com.hobbietrades.backend.service.ItemPhotoValidationService.ValidationResult;
 import com.hobbietrades.backend.service.ItemValidationException;
 import com.hobbietrades.backend.service.RoboflowVisionService;
+import com.hobbietrades.backend.util.AnalyzeResponseHelper;
 import com.hobbietrades.backend.util.HobbyCategories;
 import com.hobbietrades.backend.util.UploadValidator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -120,16 +121,7 @@ public class ImageUploadController {
 
             result.put("success",           true);
             result.put("accepted",          true);
-            result.put("detectedCategory",  ai.get("category"));
-            result.put("detectedCondition", ai.get("condition"));
-            result.put("rawLabels",         ai.get("rawLabels"));
-            result.put("caption",           ai.get("caption"));
-            result.put("confidence",        ai.get("confidence"));
-            result.put("suggestedTitle",    ai.get("suggestedTitle"));
-            result.put("detectedBrand",     ai.get("detectedBrand"));
-            result.put("detectedModel",     ai.get("detectedModel"));
-            result.put("estimateKeyword",   ai.get("estimateKeyword"));
-            result.put("detectionSource",   ai.getOrDefault("detectionSource", "huggingface"));
+            AnalyzeResponseHelper.putAnalysisFields(result, ai);
             result.put("message",           "Photo accepted — " + ai.get("category") + " detected.");
             return ResponseEntity.ok(result);
 

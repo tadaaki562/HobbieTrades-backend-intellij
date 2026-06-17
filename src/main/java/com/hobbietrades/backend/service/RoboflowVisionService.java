@@ -6,6 +6,7 @@ import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowClient;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowException;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowPredictionParser;
 import com.hobbietrades.backend.service.roboflow.RoboflowWorkflowPredictionParser.ParsedPrediction;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,8 @@ public class RoboflowVisionService {
 
     @Autowired
     private RoboflowDetectionModelClient detectionModelClient;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${roboflow.enabled:false}")
     private boolean enabled;
@@ -172,6 +175,17 @@ public class RoboflowVisionService {
     }
 
     private Map<String, String> buildAnalysisMap(List<PredictionHit> hits, PredictionHit best) {
+        Map<String, String> result = buildAnalysisMapForHit(hits, best);
+        attachDetectionOptions(result, hits);
+        return result;
+    }
+
+    private Map<String, String> buildAnalysisMapForHit(List<PredictionHit> allHits, PredictionHit best) {
+        List<PredictionHit> hits = allHits.stream()
+                .filter(h -> h.category().equals(best.category()))
+                .sorted(Comparator.comparingDouble(PredictionHit::confidence).reversed())
+                .toList();
+
         StringBuilder labels = new StringBuilder();
         for (int i = 0; i < Math.min(6, hits.size()); i++) {
             PredictionHit h = hits.get(i);
@@ -206,6 +220,47 @@ public class RoboflowVisionService {
         result.put("estimateKeyword", hint.estimateKeyword());
         result.put("detectionSource", "roboflow:" + best.modelName());
         return result;
+    }
+
+    /** When both a camera and an instrument are detected, let the user pick which they are trading. */
+    private void attachDetectionOptions(Map<String, String> result, List<PredictionHit> allHits) {
+        Map<String, PredictionHit> bestPerCategory = new LinkedHashMap<>();
+        for (PredictionHit h : allHits) {
+            if (h.confidence() < MIN_CONFIDENCE || BrandModelResolver.isNonItemLabel(h.className())) {
+                continue;
+            }
+            bestPerCategory.merge(h.category(), h, (a, b) -> a.confidence() >= b.confidence() ? a : b);
+        }
+        if (!bestPerCategory.containsKey("Cameras") || !bestPerCategory.containsKey("Instruments")) {
+            return;
+        }
+
+        List<Map<String, String>> options = bestPerCategory.values().stream()
+                .sorted(Comparator.comparingDouble(PredictionHit::confidence).reversed())
+                .map(hit -> toDetectionOption(allHits, hit))
+                .toList();
+
+        try {
+            result.put("hasMultipleDetections", "true");
+            result.put("detectionOptions", objectMapper.writeValueAsString(options));
+        } catch (Exception e) {
+            System.out.println("[Roboflow] Could not serialize detection options: " + e.getMessage());
+        }
+    }
+
+    private Map<String, String> toDetectionOption(List<PredictionHit> allHits, PredictionHit hit) {
+        Map<String, String> analysis = buildAnalysisMapForHit(allHits, hit);
+        Map<String, String> option = new LinkedHashMap<>();
+        option.put("detectedCategory", analysis.get("category"));
+        option.put("detectedCondition", analysis.get("condition"));
+        option.put("caption", analysis.get("caption"));
+        option.put("className", analysis.get("caption"));
+        option.put("confidence", analysis.get("confidence"));
+        option.put("suggestedTitle", analysis.get("suggestedTitle"));
+        option.put("detectedBrand", analysis.get("detectedBrand"));
+        option.put("detectedModel", analysis.get("detectedModel"));
+        option.put("estimateKeyword", analysis.get("estimateKeyword"));
+        return option;
     }
 
     private static String deriveCondition(double confidence) {
