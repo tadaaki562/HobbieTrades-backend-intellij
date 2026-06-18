@@ -7,11 +7,13 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Holds the latest ESP32 photo until the create-listing page picks it up. */
+/** Holds ESP32 preview frames and the latest capture for create-listing. */
 @Service
 public class Esp32CaptureService {
 
-    public record ArmState(long sessionId, long untilMs) {}
+    public record PreviewState(long sessionId, long untilMs) {}
+
+    public record PreviewFrame(byte[] image, long updatedAtMs) {}
 
     public record StoredCapture(
             byte[] image,
@@ -26,29 +28,73 @@ public class Esp32CaptureService {
     }
 
     private final AtomicReference<StoredCapture> latest = new AtomicReference<>();
-    private final AtomicReference<Long> armedUntilMs = new AtomicReference<>(0L);
-    private final AtomicLong activeArmSessionId = new AtomicLong(0L);
+    private final AtomicReference<Long> previewUntilMs = new AtomicReference<>(0L);
+    private final AtomicLong previewSessionId = new AtomicLong(0L);
+    private final AtomicLong pendingCaptureSessionId = new AtomicLong(0L);
+    private final AtomicReference<PreviewFrame> previewFrame = new AtomicReference<>();
 
-    /** Website calls this when the user clicks "Use ESP32 Camera". */
-    public ArmState armCaptureWindow(long durationMs) {
-        long until = System.currentTimeMillis() + Math.max(durationMs, 5000L);
-        long sessionId = activeArmSessionId.incrementAndGet();
-        armedUntilMs.set(until);
-        return new ArmState(sessionId, until);
+    /** Website opens the live camera modal. */
+    public PreviewState startPreview(long durationMs) {
+        long until = System.currentTimeMillis() + Math.max(durationMs, 10_000L);
+        long sessionId = previewSessionId.incrementAndGet();
+        previewUntilMs.set(until);
+        pendingCaptureSessionId.set(0);
+        previewFrame.set(null);
+        return new PreviewState(sessionId, until);
     }
 
-    /** ESP32 polls this; returns the active arm session while the window is open. */
-    public Optional<ArmState> activeArm() {
-        long until = armedUntilMs.get();
+    public void stopPreview() {
+        previewUntilMs.set(0L);
+        pendingCaptureSessionId.set(0);
+        previewFrame.set(null);
+    }
+
+    public Optional<PreviewState> activePreview() {
+        long until = previewUntilMs.get();
         if (until <= System.currentTimeMillis()) {
             return Optional.empty();
         }
-        long sessionId = activeArmSessionId.get();
-        return sessionId > 0 ? Optional.of(new ArmState(sessionId, until)) : Optional.empty();
+        long sessionId = previewSessionId.get();
+        return sessionId > 0 ? Optional.of(new PreviewState(sessionId, until)) : Optional.empty();
+    }
+
+    /** User clicked Take Photo while preview is open. */
+    public long requestCapture() {
+        Optional<PreviewState> preview = activePreview();
+        if (preview.isEmpty()) {
+            return 0L;
+        }
+        long sessionId = preview.get().sessionId();
+        pendingCaptureSessionId.set(sessionId);
+        return sessionId;
+    }
+
+    public long pendingCaptureSession() {
+        if (activePreview().isEmpty()) {
+            return 0L;
+        }
+        return pendingCaptureSessionId.get();
+    }
+
+    public void clearCaptureRequest() {
+        pendingCaptureSessionId.set(0);
+    }
+
+    public void storePreviewFrame(byte[] image) {
+        previewFrame.set(new PreviewFrame(image, System.currentTimeMillis()));
+    }
+
+    public Optional<PreviewFrame> previewFrameNewerThan(long sinceMs) {
+        PreviewFrame frame = previewFrame.get();
+        if (frame == null || frame.updatedAtMs() <= sinceMs) {
+            return Optional.empty();
+        }
+        return Optional.of(frame);
     }
 
     public void store(byte[] image, String mime, Map<String, Object> analysis) {
         latest.set(new StoredCapture(image, mime, analysis, System.currentTimeMillis(), false));
+        clearCaptureRequest();
     }
 
     /** Returns the capture once if it is newer than {@code sinceMs} and not yet consumed. */

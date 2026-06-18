@@ -1,6 +1,8 @@
 package com.hobbietrades.backend.controller;
 
 import com.hobbietrades.backend.service.Esp32CaptureService;
+import com.hobbietrades.backend.service.Esp32CaptureService.PreviewFrame;
+import com.hobbietrades.backend.service.Esp32CaptureService.PreviewState;
 import com.hobbietrades.backend.service.Esp32CaptureService.StoredCapture;
 import com.hobbietrades.backend.service.ItemPhotoValidationService;
 import com.hobbietrades.backend.service.ItemPhotoValidationService.ValidationResult;
@@ -19,7 +21,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * ESP32-CAM uploads a photo here; the create-listing page polls /latest to receive it.
+ * ESP32-CAM live preview + manual capture for create-listing.
  */
 @RestController
 @RequestMapping("/api/esp32")
@@ -42,25 +44,134 @@ public class Esp32CaptureController {
         this.imageUploadController = imageUploadController;
     }
 
+    /** Website opens the ESP32 camera modal. */
+    @PostMapping("/preview/start")
+    public ResponseEntity<Map<String, Object>> startPreview() {
+        Map<String, Object> body = new HashMap<>();
+        PreviewState preview = captureService.startPreview(120_000L);
+        body.put("success", true);
+        body.put("session", preview.sessionId());
+        body.put("until", preview.untilMs());
+        body.put("message", "Live preview started.");
+        return ResponseEntity.ok(body);
+    }
+
+    /** Website closes the ESP32 camera modal. */
+    @PostMapping("/preview/stop")
+    public ResponseEntity<Map<String, Object>> stopPreview() {
+        captureService.stopPreview();
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", true);
+        return ResponseEntity.ok(body);
+    }
+
+    /** Website polls this to render the live camera feed. */
+    @GetMapping("/preview/frame")
+    public ResponseEntity<Map<String, Object>> previewFrame(@RequestParam("since") long since) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("available", false);
+
+        return captureService.previewFrameNewerThan(since)
+                .map(frame -> {
+                    body.put("available", true);
+                    body.put("updatedAt", frame.updatedAtMs());
+                    body.put("mimeType", "image/jpeg");
+                    body.put("imageBase64", Base64.getEncoder().encodeToString(frame.image()));
+                    return ResponseEntity.ok(body);
+                })
+                .orElseGet(() -> ResponseEntity.ok(body));
+    }
+
+    /** Website calls this when the user clicks Take Photo. */
+    @PostMapping("/capture/request")
+    public ResponseEntity<Map<String, Object>> requestCapture() {
+        Map<String, Object> body = new HashMap<>();
+        long session = captureService.requestCapture();
+        if (session <= 0) {
+            body.put("success", false);
+            body.put("message", "Live preview is not active.");
+            return ResponseEntity.badRequest().body(body);
+        }
+        body.put("success", true);
+        body.put("session", session);
+        body.put("message", "Capture requested.");
+        return ResponseEntity.ok(body);
+    }
+
     /**
-     * ESP32 POSTs a JPEG here after taking a photo.
-     * Requires ?key= matching ESP32_DEVICE_KEY on Render.
+     * ESP32 polls this. When preview is active it should stream frames.
+     * When captureSession matches, it should take the final photo.
      */
+    @GetMapping("/status")
+    public ResponseEntity<Map<String, Object>> status(@RequestParam("key") String key) {
+        Map<String, Object> body = new HashMap<>();
+        if (deviceKey == null || deviceKey.isBlank()) {
+            body.put("preview", false);
+            body.put("message", "ESP32 device key not configured on server.");
+            return ResponseEntity.status(503).body(body);
+        }
+        if (!deviceKey.equals(key)) {
+            body.put("preview", false);
+            body.put("message", "Invalid device key.");
+            return ResponseEntity.status(403).body(body);
+        }
+
+        return captureService.activePreview()
+                .map(preview -> {
+                    body.put("preview", true);
+                    body.put("session", preview.sessionId());
+                    body.put("captureSession", captureService.pendingCaptureSession());
+                    return ResponseEntity.ok(body);
+                })
+                .orElseGet(() -> {
+                    body.put("preview", false);
+                    body.put("session", 0);
+                    body.put("captureSession", 0);
+                    return ResponseEntity.ok(body);
+                });
+    }
+
+    /** ESP32 uploads low-res preview frames while preview mode is active. */
+    @PostMapping("/preview")
+    public ResponseEntity<Map<String, Object>> previewUpload(
+            @RequestParam("photo") MultipartFile photo,
+            @RequestParam("key") String key) {
+
+        Map<String, Object> result = new HashMap<>();
+        if (!isDeviceAuthorized(key, result)) {
+            return unauthorized(result);
+        }
+        if (captureService.activePreview().isEmpty()) {
+            result.put("success", false);
+            result.put("message", "Preview is not active.");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        try {
+            UploadValidator.validateImage(photo);
+            captureService.storePreviewFrame(photo.getBytes());
+            result.put("success", true);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "Preview upload failed.");
+            return ResponseEntity.status(500).body(result);
+        }
+    }
+
+    /** ESP32 POSTs the final JPEG after the user clicks Take Photo on the website. */
     @PostMapping("/capture")
     public ResponseEntity<Map<String, Object>> capture(
             @RequestParam("photo") MultipartFile photo,
             @RequestParam("key") String key) {
 
         Map<String, Object> result = new HashMap<>();
-        if (deviceKey == null || deviceKey.isBlank()) {
-            result.put("success", false);
-            result.put("message", "ESP32 device key not configured on server.");
-            return ResponseEntity.status(503).body(result);
-        }
-        if (!deviceKey.equals(key)) {
-            result.put("success", false);
-            result.put("message", "Invalid device key.");
-            return ResponseEntity.status(403).body(result);
+        if (!isDeviceAuthorized(key, result)) {
+            return unauthorized(result);
         }
 
         try {
@@ -94,59 +205,7 @@ public class Esp32CaptureController {
         }
     }
 
-    /**
-     * Create-listing page calls this when the user clicks "Use ESP32 Camera".
-     * The ESP32 polls /armed and auto-captures while the window is open.
-     */
-    @PostMapping("/arm")
-    public ResponseEntity<Map<String, Object>> arm() {
-        Map<String, Object> body = new HashMap<>();
-        Esp32CaptureService.ArmState arm = captureService.armCaptureWindow(120_000L);
-        body.put("success", true);
-        body.put("armed", true);
-        body.put("session", arm.sessionId());
-        body.put("until", arm.untilMs());
-        body.put("message", "ESP32 capture window opened for 2 minutes.");
-        return ResponseEntity.ok(body);
-    }
-
-    /**
-     * ESP32 polls this every second. When armed=true, it should capture and upload once
-     * per unique {@code session} value.
-     */
-    @GetMapping("/armed")
-    public ResponseEntity<Map<String, Object>> armed(@RequestParam("key") String key) {
-        Map<String, Object> body = new HashMap<>();
-        if (deviceKey == null || deviceKey.isBlank()) {
-            body.put("armed", false);
-            body.put("message", "ESP32 device key not configured on server.");
-            return ResponseEntity.status(503).body(body);
-        }
-        if (!deviceKey.equals(key)) {
-            body.put("armed", false);
-            body.put("message", "Invalid device key.");
-            return ResponseEntity.status(403).body(body);
-        }
-
-        return captureService.activeArm()
-                .map(arm -> {
-                    body.put("armed", true);
-                    body.put("session", arm.sessionId());
-                    body.put("until", arm.untilMs());
-                    return ResponseEntity.ok(body);
-                })
-                .orElseGet(() -> {
-                    body.put("armed", false);
-                    body.put("session", 0);
-                    body.put("until", 0);
-                    return ResponseEntity.ok(body);
-                });
-    }
-
-    /**
-     * Create-listing page polls this after the user clicks "Use ESP32 Camera".
-     * Pass since=timestamp (ms) from when the button was clicked.
-     */
+    /** Create-listing page polls this after Take Photo is clicked. */
     @GetMapping("/latest")
     public ResponseEntity<Map<String, Object>> latest(@RequestParam("since") long since) {
         Map<String, Object> body = new HashMap<>();
@@ -155,6 +214,28 @@ public class Esp32CaptureController {
         return captureService.takeIfNewerThan(since)
                 .map(cap -> ResponseEntity.ok(toPollResponse(cap)))
                 .orElseGet(() -> ResponseEntity.ok(body));
+    }
+
+    private boolean isDeviceAuthorized(String key, Map<String, Object> result) {
+        if (deviceKey == null || deviceKey.isBlank()) {
+            result.put("success", false);
+            result.put("message", "ESP32 device key not configured on server.");
+            return false;
+        }
+        if (!deviceKey.equals(key)) {
+            result.put("success", false);
+            result.put("message", "Invalid device key.");
+            return false;
+        }
+        return true;
+    }
+
+    private ResponseEntity<Map<String, Object>> unauthorized(Map<String, Object> result) {
+        String message = String.valueOf(result.getOrDefault("message", "Unauthorized"));
+        if (message.contains("not configured")) {
+            return ResponseEntity.status(503).body(result);
+        }
+        return ResponseEntity.status(403).body(result);
     }
 
     private Map<String, Object> toPollResponse(StoredCapture cap) {
