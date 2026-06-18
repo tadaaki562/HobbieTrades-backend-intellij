@@ -95,6 +95,45 @@ public class Esp32CaptureController {
     }
 
     /**
+     * Create-listing page calls this when the user clicks "Use ESP32 Camera".
+     * The ESP32 polls /armed and auto-captures while the window is open.
+     */
+    @PostMapping("/arm")
+    public ResponseEntity<Map<String, Object>> arm() {
+        Map<String, Object> body = new HashMap<>();
+        long until = captureService.armCaptureWindow(120_000L);
+        body.put("success", true);
+        body.put("armed", true);
+        body.put("until", until);
+        body.put("message", "ESP32 capture window opened for 2 minutes.");
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * ESP32 polls this every second. When armed=true, it should capture and upload once
+     * per unique {@code until} value.
+     */
+    @GetMapping("/armed")
+    public ResponseEntity<Map<String, Object>> armed(@RequestParam("key") String key) {
+        Map<String, Object> body = new HashMap<>();
+        if (deviceKey == null || deviceKey.isBlank()) {
+            body.put("armed", false);
+            body.put("message", "ESP32 device key not configured on server.");
+            return ResponseEntity.status(503).body(body);
+        }
+        if (!deviceKey.equals(key)) {
+            body.put("armed", false);
+            body.put("message", "Invalid device key.");
+            return ResponseEntity.status(403).body(body);
+        }
+
+        long until = captureService.activeArmUntilMs();
+        body.put("armed", until > 0);
+        body.put("until", until);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
      * Create-listing page polls this after the user clicks "Use ESP32 Camera".
      * Pass since=timestamp (ms) from when the button was clicked.
      */
