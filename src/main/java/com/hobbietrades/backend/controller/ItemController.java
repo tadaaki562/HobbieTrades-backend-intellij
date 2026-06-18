@@ -93,6 +93,7 @@ public class ItemController {
         item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
         if (body.get("lookingFor") != null) item.setLookingFor(body.get("lookingFor").toString());
         if (body.get("location")   != null) item.setLocation(body.get("location").toString());
+        if (body.get("photoUrl")   != null) item.setPhotoUrl(body.get("photoUrl").toString());
         item.setIsAvailable(true);
 
         itemRepository.save(item);
@@ -141,6 +142,7 @@ public class ItemController {
         if (body.get("estimatedValue") != null) item.setEstimatedValue(new BigDecimal(body.get("estimatedValue").toString()));
         if (body.get("lookingFor")     != null) item.setLookingFor(body.get("lookingFor").toString());
         if (body.get("location")       != null) item.setLocation(body.get("location").toString());
+        if (body.get("photoUrl")       != null) item.setPhotoUrl(body.get("photoUrl").toString());
 
         itemRepository.save(item);
 
