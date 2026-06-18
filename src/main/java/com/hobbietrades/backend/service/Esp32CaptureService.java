@@ -37,6 +37,7 @@ public class Esp32CaptureService {
 
     public void recordHeartbeat() {
         lastHeartbeatMs.set(System.currentTimeMillis());
+        touchPreview();
     }
 
     public long lastPreviewFrameMs() {
@@ -55,6 +56,14 @@ public class Esp32CaptureService {
         pendingCaptureSessionId.set(0);
         previewFrame.set(null);
         return new PreviewState(sessionId, until);
+    }
+
+    /** Keep preview alive while the ESP32 is actively sending frames or heartbeats. */
+    public void touchPreview() {
+        long until = previewUntilMs.get();
+        if (until > System.currentTimeMillis()) {
+            previewUntilMs.set(System.currentTimeMillis() + 180_000L);
+        }
     }
 
     public void stopPreview() {

@@ -83,7 +83,7 @@ public class Esp32CaptureController {
     @PostMapping("/preview/start")
     public ResponseEntity<Map<String, Object>> startPreview() {
         Map<String, Object> body = new HashMap<>();
-        PreviewState preview = captureService.startPreview(120_000L);
+        PreviewState preview = captureService.startPreview(180_000L);
         body.put("success", true);
         body.put("session", preview.sessionId());
         body.put("until", preview.untilMs());
