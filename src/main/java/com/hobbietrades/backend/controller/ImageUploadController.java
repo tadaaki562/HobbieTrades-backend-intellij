@@ -13,6 +13,7 @@ import com.hobbietrades.backend.service.ItemValidationException;
 import com.hobbietrades.backend.service.RoboflowVisionService;
 import com.hobbietrades.backend.util.AnalyzeResponseHelper;
 import com.hobbietrades.backend.util.HobbyCategories;
+import com.hobbietrades.backend.util.ImageStorageHelper;
 import com.hobbietrades.backend.util.UploadValidator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -210,9 +211,13 @@ public class ImageUploadController {
         }
 
         String photoUrl = "/api/items/" + id + "/photo";
-        String mime = photo.getContentType() != null ? photo.getContentType() : "image/jpeg";
+        String mime = ImageStorageHelper.normalizedMime(photo.getContentType());
+        byte[] storedBytes = ImageStorageHelper.prepareForDatabase(imageBytes, mime);
+        if (storedBytes != imageBytes || !mime.contains("jpeg")) {
+            mime = "image/jpeg";
+        }
 
-        item.setPhotoData(imageBytes);
+        item.setPhotoData(storedBytes);
         item.setPhotoMime(mime);
         item.setPhotoUrl(photoUrl);
 
@@ -226,8 +231,9 @@ public class ImageUploadController {
             itemRepository.save(item);
         } catch (Exception e) {
             System.out.println("[Upload] DB save failed: " + e.getMessage());
+            e.printStackTrace();
             response.put("success", false);
-            response.put("message", "Could not save photo. If this keeps happening, contact support.");
+            response.put("message", "Could not save photo — try a smaller JPG (under 5MB) or redeploy the latest backend.");
             return ResponseEntity.status(500).body(response);
         }
 
@@ -271,15 +277,17 @@ public class ImageUploadController {
                     return ResponseEntity.badRequest().body(response);
                 }
                 UploadValidator.validateImage(file);
-                byte[] bytes = file.getBytes();
-                // AI already validated on /validate-photo when user picked each hobby slot
+                byte[] bytes = ImageStorageHelper.prepareForDatabase(
+                        file.getBytes(),
+                        ImageStorageHelper.normalizedMime(file.getContentType()));
+                String galleryMime = "image/jpeg";
 
                 int slot = i + 1;
                 ItemGalleryImage galleryImage = new ItemGalleryImage();
                 galleryImage.setItemId(id);
                 galleryImage.setSlot(slot);
                 galleryImage.setImageData(bytes);
-                galleryImage.setMimeType(file.getContentType() != null ? file.getContentType() : "image/jpeg");
+                galleryImage.setMimeType(galleryMime);
                 galleryRepository.save(galleryImage);
 
                 urls.add("/api/items/" + id + "/gallery/" + slot);

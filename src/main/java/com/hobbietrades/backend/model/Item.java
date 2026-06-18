@@ -36,7 +36,7 @@ public class Item {
     private String photoUrl;
 
     @Lob
-    @Column(name = "photo_data")
+    @Column(name = "photo_data", columnDefinition = "LONGBLOB")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private byte[] photoData;
 

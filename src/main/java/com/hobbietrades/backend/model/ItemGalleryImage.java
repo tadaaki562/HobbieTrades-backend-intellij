@@ -18,7 +18,7 @@ public class ItemGalleryImage {
     private int slot;
 
     @Lob
-    @Column(name = "image_data", nullable = false)
+    @Column(name = "image_data", nullable = false, columnDefinition = "LONGBLOB")
     private byte[] imageData;
 
     @Column(name = "mime_type", length = 64)
