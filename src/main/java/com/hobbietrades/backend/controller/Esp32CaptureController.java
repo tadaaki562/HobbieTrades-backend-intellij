@@ -101,17 +101,18 @@ public class Esp32CaptureController {
     @PostMapping("/arm")
     public ResponseEntity<Map<String, Object>> arm() {
         Map<String, Object> body = new HashMap<>();
-        long until = captureService.armCaptureWindow(120_000L);
+        Esp32CaptureService.ArmState arm = captureService.armCaptureWindow(120_000L);
         body.put("success", true);
         body.put("armed", true);
-        body.put("until", until);
+        body.put("session", arm.sessionId());
+        body.put("until", arm.untilMs());
         body.put("message", "ESP32 capture window opened for 2 minutes.");
         return ResponseEntity.ok(body);
     }
 
     /**
      * ESP32 polls this every second. When armed=true, it should capture and upload once
-     * per unique {@code until} value.
+     * per unique {@code session} value.
      */
     @GetMapping("/armed")
     public ResponseEntity<Map<String, Object>> armed(@RequestParam("key") String key) {
@@ -127,10 +128,19 @@ public class Esp32CaptureController {
             return ResponseEntity.status(403).body(body);
         }
 
-        long until = captureService.activeArmUntilMs();
-        body.put("armed", until > 0);
-        body.put("until", until);
-        return ResponseEntity.ok(body);
+        return captureService.activeArm()
+                .map(arm -> {
+                    body.put("armed", true);
+                    body.put("session", arm.sessionId());
+                    body.put("until", arm.untilMs());
+                    return ResponseEntity.ok(body);
+                })
+                .orElseGet(() -> {
+                    body.put("armed", false);
+                    body.put("session", 0);
+                    body.put("until", 0);
+                    return ResponseEntity.ok(body);
+                });
     }
 
     /**
