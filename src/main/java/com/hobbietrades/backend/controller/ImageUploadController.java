@@ -198,8 +198,8 @@ public class ImageUploadController {
         try {
             UploadValidator.validateImage(photo);
             imageBytes = photo.getBytes();
-            photoValidationService.validate(imageBytes, this::runHuggingFaceOnly);
-        } catch (ItemValidationException | IllegalArgumentException e) {
+            // AI already validated on /analyze or /validate-photo during create-listing
+        } catch (IllegalArgumentException e) {
             response.put("success", false);
             response.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(response);
@@ -212,54 +212,28 @@ public class ImageUploadController {
         String photoUrl = "/api/items/" + id + "/photo";
         String mime = photo.getContentType() != null ? photo.getContentType() : "image/jpeg";
 
+        item.setPhotoData(imageBytes);
+        item.setPhotoMime(mime);
+        item.setPhotoUrl(photoUrl);
+
         try {
             saveFile(photo, id);
         } catch (IOException e) {
             System.out.println("[Upload] disk backup failed (non-fatal): " + e.getMessage());
         }
 
-        item.setPhotoData(imageBytes);
-        item.setPhotoMime(mime);
-        item.setPhotoUrl(photoUrl);
-
         try {
-            Map<String, String> ai = runAI(imageBytes);
-            boolean catUpdated  = false;
-            boolean condUpdated = false;
-
-            if (isBlank(item.getCategory()) && !isBlank(ai.get("category"))) {
-                item.setCategory(ai.get("category"));
-                catUpdated = true;
-            }
-            if (isBlank(item.getConditionLabel()) && !isBlank(ai.get("condition"))) {
-                item.setConditionLabel(ai.get("condition"));
-                condUpdated = true;
-            }
-
             itemRepository.save(item);
-
-            response.put("success",           true);
-            response.put("photoUrl",          photoUrl);
-            response.put("detectedCategory",  ai.get("category"));
-            response.put("detectedCondition", ai.get("condition"));
-            response.put("rawLabels",         ai.get("rawLabels"));
-            response.put("caption",           ai.get("caption"));
-            response.put("suggestedTitle",    ai.get("suggestedTitle"));
-            response.put("detectedBrand",     ai.get("detectedBrand"));
-            response.put("detectedModel",     ai.get("detectedModel"));
-            response.put("estimateKeyword",   ai.get("estimateKeyword"));
-            response.put("categoryUpdated",   catUpdated);
-            response.put("conditionUpdated",  condUpdated);
-            response.put("message",           "Photo uploaded and analyzed successfully");
-
         } catch (Exception e) {
-            // Photo saved even if AI failed — still return success
-            itemRepository.save(item);
-            response.put("success",  true);
-            response.put("photoUrl", photoUrl);
-            response.put("message",  "Photo saved (AI analysis failed: " + e.getMessage() + ")");
+            System.out.println("[Upload] DB save failed: " + e.getMessage());
+            response.put("success", false);
+            response.put("message", "Could not save photo. If this keeps happening, contact support.");
+            return ResponseEntity.status(500).body(response);
         }
 
+        response.put("success", true);
+        response.put("photoUrl", photoUrl);
+        response.put("message", "Photo uploaded successfully");
         return ResponseEntity.ok(response);
     }
 
@@ -298,7 +272,7 @@ public class ImageUploadController {
                 }
                 UploadValidator.validateImage(file);
                 byte[] bytes = file.getBytes();
-                photoValidationService.validate(bytes, this::runHuggingFaceOnly);
+                // AI already validated on /validate-photo when user picked each hobby slot
 
                 int slot = i + 1;
                 ItemGalleryImage galleryImage = new ItemGalleryImage();

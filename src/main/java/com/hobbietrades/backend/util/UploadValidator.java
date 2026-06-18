@@ -24,9 +24,11 @@ public final class UploadValidator {
             throw new IllegalArgumentException("Only JPG, PNG, WEBP, or GIF images are allowed.");
         }
         String contentType = file.getContentType();
-        if (contentType != null && !contentType.isBlank()
-                && !ALLOWED_CONTENT_TYPES.contains(contentType.toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("Invalid image type: " + contentType);
+        if (contentType != null && !contentType.isBlank()) {
+            String ct = contentType.toLowerCase(Locale.ROOT);
+            if (!ALLOWED_CONTENT_TYPES.contains(ct) && !"application/octet-stream".equals(ct)) {
+                throw new IllegalArgumentException("Invalid image type: " + contentType);
+            }
         }
     }
 
