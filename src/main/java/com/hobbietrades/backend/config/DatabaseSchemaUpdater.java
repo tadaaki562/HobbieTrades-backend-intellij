@@ -2,6 +2,7 @@ package com.hobbietrades.backend.config;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
  * Fixes older databases where Hibernate created a tiny BLOB column.
  */
 @Component
+@ConditionalOnProperty(name = "hobbietrades.schema.auto-update", havingValue = "true", matchIfMissing = true)
 public class DatabaseSchemaUpdater implements ApplicationRunner {
 
     private final JdbcTemplate jdbc;
