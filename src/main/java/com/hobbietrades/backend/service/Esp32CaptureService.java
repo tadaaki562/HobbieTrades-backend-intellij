@@ -32,6 +32,20 @@ public class Esp32CaptureService {
     private final AtomicLong previewSessionId = new AtomicLong(0L);
     private final AtomicLong pendingCaptureSessionId = new AtomicLong(0L);
     private final AtomicReference<PreviewFrame> previewFrame = new AtomicReference<>();
+    private final AtomicLong lastPreviewFrameMs = new AtomicLong(0L);
+    private final AtomicLong lastHeartbeatMs = new AtomicLong(0L);
+
+    public void recordHeartbeat() {
+        lastHeartbeatMs.set(System.currentTimeMillis());
+    }
+
+    public long lastPreviewFrameMs() {
+        return lastPreviewFrameMs.get();
+    }
+
+    public long lastHeartbeatMs() {
+        return lastHeartbeatMs.get();
+    }
 
     /** Website opens the live camera modal. */
     public PreviewState startPreview(long durationMs) {
@@ -81,7 +95,10 @@ public class Esp32CaptureService {
     }
 
     public void storePreviewFrame(byte[] image) {
-        previewFrame.set(new PreviewFrame(image, System.currentTimeMillis()));
+        long now = System.currentTimeMillis();
+        previewFrame.set(new PreviewFrame(image, now));
+        lastPreviewFrameMs.set(now);
+        recordHeartbeat();
     }
 
     public Optional<PreviewFrame> previewFrameNewerThan(long sinceMs) {

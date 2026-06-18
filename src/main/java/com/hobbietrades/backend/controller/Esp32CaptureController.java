@@ -44,6 +44,41 @@ public class Esp32CaptureController {
         this.imageUploadController = imageUploadController;
     }
 
+    /** Website polls this to see whether the ESP32 is actually sending frames. */
+    @GetMapping("/preview/health")
+    public ResponseEntity<Map<String, Object>> previewHealth() {
+        Map<String, Object> body = new HashMap<>();
+        long now = System.currentTimeMillis();
+        boolean deviceConfigured = deviceKey != null && !deviceKey.isBlank();
+        boolean previewActive = captureService.activePreview().isPresent();
+        long lastFrame = captureService.lastPreviewFrameMs();
+        long lastBeat = captureService.lastHeartbeatMs();
+        long frameAgeMs = lastFrame > 0 ? now - lastFrame : -1;
+        long beatAgeMs = lastBeat > 0 ? now - lastBeat : -1;
+
+        body.put("deviceConfigured", deviceConfigured);
+        body.put("previewActive", previewActive);
+        body.put("lastFrameAt", lastFrame);
+        body.put("lastHeartbeatAt", lastBeat);
+        body.put("frameAgeMs", frameAgeMs);
+        body.put("heartbeatAgeMs", beatAgeMs);
+        body.put("esp32Online", beatAgeMs >= 0 && beatAgeMs <= 20_000);
+        body.put("feedLive", previewActive && frameAgeMs >= 0 && frameAgeMs <= 4_000);
+        return ResponseEntity.ok(body);
+    }
+
+    /** ESP32 sends a lightweight heartbeat so the website can detect it is online. */
+    @PostMapping("/heartbeat")
+    public ResponseEntity<Map<String, Object>> heartbeat(@RequestParam("key") String key) {
+        Map<String, Object> body = new HashMap<>();
+        if (!isDeviceAuthorized(key, body)) {
+            return unauthorized(body);
+        }
+        captureService.recordHeartbeat();
+        body.put("success", true);
+        return ResponseEntity.ok(body);
+    }
+
     /** Website opens the ESP32 camera modal. */
     @PostMapping("/preview/start")
     public ResponseEntity<Map<String, Object>> startPreview() {
