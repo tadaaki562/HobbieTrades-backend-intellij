@@ -2,7 +2,6 @@ package com.hobbietrades.backend.controller;
 
 import com.hobbietrades.backend.service.ListingMaintenanceService;
 import com.hobbietrades.backend.service.ListingMaintenanceService.WipeResult;
-import com.hobbietrades.backend.service.ShowcaseSeedService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,16 +14,12 @@ import java.util.Map;
 public class AdminController {
 
     private final ListingMaintenanceService listingMaintenance;
-    private final ShowcaseSeedService showcaseSeedService;
 
     @Value("${hobbietrades.admin-key:}")
     private String adminKey;
 
-    public AdminController(
-            ListingMaintenanceService listingMaintenance,
-            ShowcaseSeedService showcaseSeedService) {
+    public AdminController(ListingMaintenanceService listingMaintenance) {
         this.listingMaintenance = listingMaintenance;
-        this.showcaseSeedService = showcaseSeedService;
     }
 
     /**
@@ -55,21 +50,5 @@ public class AdminController {
         body.put("galleryImagesRemoved", result.galleryImagesRemoved());
         body.put("diskFilesRemoved", result.diskFilesRemoved());
         return ResponseEntity.ok(body);
-    }
-
-    /** Idempotent — creates PH showcase users + listings if missing. */
-    @PostMapping("/seed-showcase")
-    public ResponseEntity<Map<String, Object>> seedShowcase(@RequestParam(required = false) String key) {
-        if (adminKey == null || adminKey.isBlank()) {
-            return ResponseEntity.status(403).body(Map.of(
-                    "success", false,
-                    "message", "Admin key not configured. Set HOBBIETRADES_ADMIN_KEY on Render first."));
-        }
-        if (!adminKey.equals(key)) {
-            return ResponseEntity.status(403).body(Map.of(
-                    "success", false,
-                    "message", "Invalid admin key."));
-        }
-        return ResponseEntity.ok(showcaseSeedService.seed());
     }
 }
