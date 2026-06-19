@@ -26,6 +26,10 @@ public class Message {
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
 
+    /** Trade lifecycle updates (accepted, confirmed, completed) — not user chat. */
+    @Column(name = "is_system")
+    private boolean system = false;
+
     @PrePersist
     public void prePersist() {
         sentAt = LocalDateTime.now();
@@ -46,4 +50,7 @@ public class Message {
 
     public LocalDateTime getSentAt() { return sentAt; }
     public void setSentAt(LocalDateTime sentAt) { this.sentAt = sentAt; }
+
+    public boolean isSystem() { return system; }
+    public void setSystem(boolean system) { this.system = system; }
 }

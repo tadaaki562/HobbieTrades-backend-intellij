@@ -325,6 +325,7 @@ public class TradeController {
         message.setTrade(trade);
         message.setSender(sender != null ? sender : trade.getProposer());
         message.setContent(content);
+        message.setSystem(true);
         messageRepository.save(message);
     }
 

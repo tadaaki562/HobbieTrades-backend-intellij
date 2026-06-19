@@ -27,6 +27,7 @@ public class DatabaseSchemaUpdater implements ApplicationRunner {
             ensureVarcharColumn("items", "photo_mime", 64);
             ensureTextColumn("items", "gallery_urls");
             ensureGalleryTable();
+            ensureBooleanColumn("messages", "is_system", false);
             System.out.println("[Schema] Photo storage columns verified.");
         } catch (Exception e) {
             System.out.println("[Schema] Photo column update skipped: " + e.getMessage());
@@ -52,6 +53,13 @@ public class DatabaseSchemaUpdater implements ApplicationRunner {
     private void ensureTextColumn(String table, String column) {
         if (!columnExists(table, column)) {
             jdbc.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " TEXT NULL");
+        }
+    }
+
+    private void ensureBooleanColumn(String table, String column, boolean defaultValue) {
+        if (!columnExists(table, column)) {
+            jdbc.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " TINYINT(1) NOT NULL DEFAULT "
+                    + (defaultValue ? "1" : "0"));
         }
     }
 
