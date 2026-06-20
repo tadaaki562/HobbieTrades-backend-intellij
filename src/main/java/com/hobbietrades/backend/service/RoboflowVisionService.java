@@ -114,7 +114,7 @@ public class RoboflowVisionService {
         }
 
         Map<String, String> result = buildAnalysisMapForHit(hits, best);
-        if (DetectionCategoryArbiter.isAmbiguous(bestPerCategory, winnerHit)) {
+        if (DetectionCategoryArbiter.shouldOfferPicker(bestPerCategory)) {
             attachDetectionOptions(result, hits, bestPerCategory, winnerHit);
         }
         return result;

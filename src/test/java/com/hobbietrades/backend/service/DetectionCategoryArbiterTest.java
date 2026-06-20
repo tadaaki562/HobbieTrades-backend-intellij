@@ -22,11 +22,36 @@ class DetectionCategoryArbiterTest {
 
         assertEquals("Instruments", winner.category());
         assertEquals("violin", winner.className());
-        assertFalse(DetectionCategoryArbiter.isAmbiguous(best, winner));
     }
 
     @Test
-    void clearCameraBeatsWeakInstrumentFalsePositive() {
+    void konicaCameraBeatsBackgroundClassicalGuitar() {
+        List<DetectionCategoryArbiter.Hit> hits = List.of(
+                new DetectionCategoryArbiter.Hit("konica", 0.72, "Cameras"),
+                new DetectionCategoryArbiter.Hit("classical guitar", 0.88, "Instruments")
+        );
+        Map<String, DetectionCategoryArbiter.Hit> best = DetectionCategoryArbiter.bestPerCategory(hits);
+        DetectionCategoryArbiter.Hit winner = DetectionCategoryArbiter.resolveWinner(best, hits);
+
+        assertEquals("Cameras", winner.category());
+        assertTrue(DetectionCategoryArbiter.shouldOfferPicker(best));
+    }
+
+    @Test
+    void filmCameraBeatsBackgroundGuitar() {
+        List<DetectionCategoryArbiter.Hit> hits = List.of(
+                new DetectionCategoryArbiter.Hit("film camera", 0.78, "Cameras"),
+                new DetectionCategoryArbiter.Hit("classical guitar", 0.85, "Instruments")
+        );
+        Map<String, DetectionCategoryArbiter.Hit> best = DetectionCategoryArbiter.bestPerCategory(hits);
+        DetectionCategoryArbiter.Hit winner = DetectionCategoryArbiter.resolveWinner(best, hits);
+
+        assertEquals("Cameras", winner.category());
+        assertTrue(DetectionCategoryArbiter.shouldOfferPicker(best));
+    }
+
+    @Test
+    void canonCameraBeatsWeakGuitarFalsePositive() {
         List<DetectionCategoryArbiter.Hit> hits = List.of(
                 new DetectionCategoryArbiter.Hit("Canon EOS R6", 0.88, "Cameras"),
                 new DetectionCategoryArbiter.Hit("guitar", 0.71, "Instruments")
@@ -35,25 +60,26 @@ class DetectionCategoryArbiterTest {
         DetectionCategoryArbiter.Hit winner = DetectionCategoryArbiter.resolveWinner(best, hits);
 
         assertEquals("Cameras", winner.category());
-        assertFalse(DetectionCategoryArbiter.isAmbiguous(best, winner));
+        assertTrue(DetectionCategoryArbiter.shouldOfferPicker(best));
     }
 
     @Test
-    void closeScoresStayAmbiguous() {
+    void bothCategoriesAlwaysOfferPicker() {
         List<DetectionCategoryArbiter.Hit> hits = List.of(
                 new DetectionCategoryArbiter.Hit("dslr camera", 0.78, "Cameras"),
                 new DetectionCategoryArbiter.Hit("digital piano", 0.74, "Instruments")
         );
         Map<String, DetectionCategoryArbiter.Hit> best = DetectionCategoryArbiter.bestPerCategory(hits);
-        DetectionCategoryArbiter.Hit winner = DetectionCategoryArbiter.resolveWinner(best, hits);
 
-        assertTrue(DetectionCategoryArbiter.isAmbiguous(best, winner));
+        assertTrue(DetectionCategoryArbiter.shouldOfferPicker(best));
     }
 
     @Test
-    void definiteInstrumentTokensRecognized() {
-        assertTrue(DetectionCategoryArbiter.isDefiniteInstrument("electric-guitar"));
+    void tokenRecognition() {
+        assertTrue(DetectionCategoryArbiter.isDefiniteInstrument("classical-guitar"));
+        assertTrue(DetectionCategoryArbiter.isStrongCameraSignal("konica"));
+        assertTrue(DetectionCategoryArbiter.isStrongCameraSignal("film camera"));
         assertTrue(DetectionCategoryArbiter.isGenericCameraLabel("mirrorless camera"));
-        assertFalse(DetectionCategoryArbiter.isGenericCameraLabel("Canon lens"));
+        assertFalse(DetectionCategoryArbiter.isGenericCameraLabel("konica"));
     }
 }

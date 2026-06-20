@@ -15,7 +15,8 @@ public final class BrandModelResolver {
             "fender", "gibson", "yamaha", "ibanez", "epiphone", "squier", "martin", "taylor",
             "roland", "korg", "casio", "kawai", "gretsch", "prs", "jackson",
             "canon", "nikon", "sony", "fujifilm", "panasonic", "olympus", "gopro", "dji",
-            "leica", "sigma", "tamron", "pentax"
+            "leica", "sigma", "tamron", "pentax", "konica", "minolta", "ricoh", "kodak",
+            "polaroid", "hasselblad", "contax", "yashica"
     ));
 
     /** Labels that are not the trade item itself (common in photos with people holding gear). */
@@ -35,6 +36,7 @@ public final class BrandModelResolver {
             "mirrorless camera", "dslr camera", "digital camera", "action camera",
             "film camera", "instant camera", "camera lens",
             "guitar", "bass", "drums", "piano", "keyboard", "violin", "cello",
+            "classical guitar", "acoustic guitar", "electric guitar",
             "saxophone", "trumpet", "flute", "ukulele", "microphone", "camera"
     );
 
@@ -46,7 +48,8 @@ public final class BrandModelResolver {
 
     private static final Map<String, String> BRAND_ALIASES = Map.of(
             "eos", "Canon",
-            "hero", "GoPro"
+            "hero", "GoPro",
+            "konica", "Konica"
     );
 
     private BrandModelResolver() {}
