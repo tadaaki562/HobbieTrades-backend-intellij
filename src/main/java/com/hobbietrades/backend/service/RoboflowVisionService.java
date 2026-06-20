@@ -93,13 +93,31 @@ public class RoboflowVisionService {
             return null;
         }
 
-        hits.sort(Comparator.comparingDouble(PredictionHit::confidence).reversed());
-        PredictionHit best = hits.get(0);
+        List<DetectionCategoryArbiter.Hit> arbiterHits = hits.stream()
+                .map(h -> new DetectionCategoryArbiter.Hit(h.className(), h.confidence(), h.category()))
+                .toList();
+        Map<String, DetectionCategoryArbiter.Hit> bestPerCategory =
+                DetectionCategoryArbiter.bestPerCategory(arbiterHits);
+        DetectionCategoryArbiter.Hit winnerHit = DetectionCategoryArbiter.resolveWinner(bestPerCategory, arbiterHits);
+        if (winnerHit == null) {
+            return null;
+        }
+
+        PredictionHit best = hits.stream()
+                .filter(h -> h.category().equals(winnerHit.category())
+                        && h.className().equals(winnerHit.className()))
+                .findFirst()
+                .orElse(hits.get(0));
+
         if (best.confidence() < MIN_CONFIDENCE) {
             return null;
         }
 
-        return buildAnalysisMap(hits, best);
+        Map<String, String> result = buildAnalysisMapForHit(hits, best);
+        if (DetectionCategoryArbiter.isAmbiguous(bestPerCategory, winnerHit)) {
+            attachDetectionOptions(result, hits, bestPerCategory, winnerHit);
+        }
+        return result;
     }
 
     private List<PredictionHit> runCategory(
@@ -174,10 +192,45 @@ public class RoboflowVisionService {
         return hits;
     }
 
-    private Map<String, String> buildAnalysisMap(List<PredictionHit> hits, PredictionHit best) {
-        Map<String, String> result = buildAnalysisMapForHit(hits, best);
-        attachDetectionOptions(result, hits);
-        return result;
+    /** When both categories are genuinely close, let the user pick. Winner is listed first. */
+    private void attachDetectionOptions(
+            Map<String, String> result,
+            List<PredictionHit> allHits,
+            Map<String, DetectionCategoryArbiter.Hit> bestPerCategory,
+            DetectionCategoryArbiter.Hit winnerHit) {
+
+        List<PredictionHit> optionHits = new ArrayList<>();
+        for (DetectionCategoryArbiter.Hit categoryBest : bestPerCategory.values()) {
+            allHits.stream()
+                    .filter(h -> h.category().equals(categoryBest.category())
+                            && h.className().equals(categoryBest.className()))
+                    .findFirst()
+                    .ifPresent(optionHits::add);
+        }
+        if (optionHits.size() < 2) {
+            return;
+        }
+
+        optionHits.sort((a, b) -> {
+            if (a.category().equals(winnerHit.category()) && !b.category().equals(winnerHit.category())) {
+                return -1;
+            }
+            if (b.category().equals(winnerHit.category()) && !a.category().equals(winnerHit.category())) {
+                return 1;
+            }
+            return Double.compare(b.confidence(), a.confidence());
+        });
+
+        List<Map<String, String>> options = optionHits.stream()
+                .map(hit -> toDetectionOption(allHits, hit))
+                .toList();
+
+        try {
+            result.put("hasMultipleDetections", "true");
+            result.put("detectionOptions", objectMapper.writeValueAsString(options));
+        } catch (Exception e) {
+            System.out.println("[Roboflow] Could not serialize detection options: " + e.getMessage());
+        }
     }
 
     private Map<String, String> buildAnalysisMapForHit(List<PredictionHit> allHits, PredictionHit best) {
@@ -220,32 +273,6 @@ public class RoboflowVisionService {
         result.put("estimateKeyword", hint.estimateKeyword());
         result.put("detectionSource", "roboflow:" + best.modelName());
         return result;
-    }
-
-    /** When both a camera and an instrument are detected, let the user pick which they are trading. */
-    private void attachDetectionOptions(Map<String, String> result, List<PredictionHit> allHits) {
-        Map<String, PredictionHit> bestPerCategory = new LinkedHashMap<>();
-        for (PredictionHit h : allHits) {
-            if (h.confidence() < MIN_CONFIDENCE || BrandModelResolver.isNonItemLabel(h.className())) {
-                continue;
-            }
-            bestPerCategory.merge(h.category(), h, (a, b) -> a.confidence() >= b.confidence() ? a : b);
-        }
-        if (!bestPerCategory.containsKey("Cameras") || !bestPerCategory.containsKey("Instruments")) {
-            return;
-        }
-
-        List<Map<String, String>> options = bestPerCategory.values().stream()
-                .sorted(Comparator.comparingDouble(PredictionHit::confidence).reversed())
-                .map(hit -> toDetectionOption(allHits, hit))
-                .toList();
-
-        try {
-            result.put("hasMultipleDetections", "true");
-            result.put("detectionOptions", objectMapper.writeValueAsString(options));
-        } catch (Exception e) {
-            System.out.println("[Roboflow] Could not serialize detection options: " + e.getMessage());
-        }
     }
 
     private Map<String, String> toDetectionOption(List<PredictionHit> allHits, PredictionHit hit) {
